@@ -127,14 +127,16 @@ favorites:
 
 ## Changelog
 
-### 0.1.0 (unreleased)
+### 0.5.0
 
 - Initial version: multi-group control, group + per-room volume, Spotify
   and Radio favorites shelf with a GUI editor including a HEOS
   browse-and-pick radio picker, English/Swedish UI.
-- **Not yet verified against a live HEOS system** — see this repo's
-  `CLAUDE.md` for exactly what's still unconfirmed. The first `beta-0.1.0`
-  release is where that verification happens.
+- **Released early, deliberately unverified against a live HEOS system** —
+  shipped as `0.5.x` rather than `1.0.0` specifically to signal that. See
+  this repo's `CLAUDE.md` for exactly what's still unconfirmed; the
+  `beta-0.1.0` pre-release tag remains published as history but was
+  bypassed for this release at the owner's request.
 
 ## License
 

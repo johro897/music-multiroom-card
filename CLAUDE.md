@@ -19,12 +19,30 @@ någon kod skrevs. Se den sessionens konversation för det fulla
 resonemanget kring layoutval (hero + rumsgrid + favorithylla, "Active
 Groups"-raden för multi-grupp-stöd, favoriter uppdelade Spotify/Radio).
 
+## Avsteg från normal release-rutin — 0.5.0 (2026-08-22)
+
+`0.5.0` släpptes MEDVETET utan den normala beta-verifieringen (skapa
+`beta-X.Y.Z`, testa live, vänta på bekräftelse INNAN merge/skarp release)
+som annars är obligatorisk enligt paraply-CLAUDE.mds release-rutin. Ägaren
+bad uttryckligen om detta ("main är tomt, skapa en 0.5 istället, tidig
+release och kör det ooverifierat, enklast så") efter att ha blivit
+tillfrågad om avvägningen. `beta-0.1.0`-taggen finns kvar publicerad som
+historik men mergen till `main` och `0.5.0`-taggen skedde INNAN någon live
+verifiering. Versionsnumret valdes medvetet under `1.0.0` (inte `0.9.0`
+som ursprungligen föreslogs) för att tydligt signalera "tidig/overifierad
+release", inte en färdig 1.0-kandidat.
+
+Konsekvens: samtliga punkter nedan är fortfarande OBEKRÄFTADE i praktiken,
+inte bara "innan release" som tidigare — uppdatera denna sektion så fort
+någon av dem faktiskt testas, oavsett vilken version som då är aktuell.
+
 ## Kräver manuell verifiering i riktig HA-instans
 
 Detta är INTE gjort än — kortet är byggt på rimliga men obekräftade
 antaganden om hur HEOS-integrationen exponerar grupptillstånd och tjänster.
-Innan `beta-0.1.0` anses klar för skarp release måste följande bekräftas
-mot en riktig HEOS-installation (se Utvecklarverktyg → Tillstånd/Åtgärder):
+Följande måste bekräftas mot en riktig HEOS-installation (se
+Utvecklarverktyg → Tillstånd/Åtgärder) så snart som möjligt, eftersom
+`0.5.0` redan är i användarens hand utan att detta är gjort:
 
 1. **`group_members`-attributet.** `_computeGroups()` i
    `music-multiroom-card.js` läser `hass.states[entity].attributes.group_members`
