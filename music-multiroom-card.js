@@ -213,6 +213,7 @@
         throw new Error(`music-multiroom-card: ${t(this._hass, 'rooms_required')}`);
       }
       this._config = {
+        ...config,
         rooms: config.rooms.map((r) => ({
           entity: r.entity,
           name: r.name || r.entity,
@@ -805,6 +806,12 @@
 
     setConfig(config) {
       this._config = {
+        // Preserve `type` (and any other top-level keys HA attaches, e.g.
+        // view_layout/grid_options) — config-changed below sends this whole
+        // object back to HA as the new authoritative config. Dropping `type`
+        // here made HA's edit-dialog preview fail with "No type provided"
+        // as soon as the user changed anything (issue found live, 2026-08-22).
+        ...config,
         rooms: (config?.rooms || []).map((r) => ({
           entity: r.entity || '',
           name: r.name || '',
