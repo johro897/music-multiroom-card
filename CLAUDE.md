@@ -36,6 +36,13 @@ Konsekvens: samtliga punkter nedan är fortfarande OBEKRÄFTADE i praktiken,
 inte bara "innan release" som tidigare — uppdatera denna sektion så fort
 någon av dem faktiskt testas, oavsett vilken version som då är aktuell.
 
+**Första konkreta exemplet på konsekvensen:** `0.5.1` fixade en bugg
+("No type provided" i edit-dialogen) som troligen hade fångats av en
+beta-verifiering innan release — istället hittades den av ägaren direkt i
+skarp drift. Buggen var dock i EDITORN (en generisk HA-lovelace-detalj,
+`config-changed` som tappade `type`), inte i något av de HEOS-specifika
+antagandena ovan — de är fortfarande helt otestade.
+
 ## Kräver manuell verifiering i riktig HA-instans
 
 Detta är INTE gjort än — kortet är byggt på rimliga men obekräftade

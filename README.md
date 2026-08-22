@@ -127,6 +127,14 @@ favorites:
 
 ## Changelog
 
+### 0.5.1
+
+- Fix: the config editor dropped the card's `type` field from its internal
+  config on every edit, so the first change made in the GUI editor (e.g.
+  "+ Add room") broke the live preview with a "No type provided" error.
+  Found immediately in real use after 0.5.0 shipped unverified — see
+  `CLAUDE.md`.
+
 ### 0.5.0
 
 - Initial version: multi-group control, group + per-room volume, Spotify
