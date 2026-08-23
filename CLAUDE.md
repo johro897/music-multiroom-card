@@ -161,6 +161,10 @@ HEOS-installation eftersom källkoden inte visar allt (t.ex. exakta
    [#2](https://github.com/johro897/music-multiroom-card/issues/2));
    `state` är bara `playing`/`paused`/`idle` (aldrig `off`) — bekräftar
    att `_computeGroups()`s `isActive`-koll redan täcker allt relevant.
+   **Bekräftat `0.7.2`→`0.7.3`:** `PAUSE`-stöd (bit `1`) varierar per
+   källa — radiokällor rapporterar bara `STOP` (bit `4096`), inte
+   `PAUSE`; Spotify-spår (via MA) rapporterar båda. Anta aldrig att
+   `PAUSE` finns bara för att `STOP` gör det.
    HA:s separata Spotify-integration bekräftat ORELATERAD (kan inte
    starta uppspelning på enheter Spotifys API inte redan känner till) —
    det ursprungliga designvalet att bara luta sig mot HEOS egen Spotify
@@ -328,6 +332,35 @@ fixade samma dag:**
   rot-anropet, med rot-nivån kvar en nivå bakåt via "Back" om man ändå
   vill åt något annat. Radiobläddringen (HEOS) är oförändrad — dess
   rot-nivå (alla musikkällor platt) var redan direkt användbar.
+
+**Tre fynd från riktig daglig användning av `beta-0.7.2` (2026-08-23,
+inte skriptad testning den här gången), alla fixade samma dag:**
+
+- **Radio-uppspelning kunde inte pausas** — `Entity media_player.hallen
+  does not support action media_player.media_play_pause` i loggen. Nytt
+  bekräftat API-faktum: till skillnad från Spotify-spår stödjer HEOS
+  radiokällor inte `PAUSE` (bit `1`) alls, bara `STOP` (bit `4096`) —
+  rimligt, en direktsänd ström går inte att "återuppta från samma
+  ställe". HA:s tjänstevalidering blockerar `media_play_pause`-anrop mot
+  entiteter som inte deklarerar stöd för det, INNAN anropet ens når
+  HEOS. Fixat: huvudknappen faller tillbaka till att bete sig som Stop
+  (`media_stop`) när `PAUSE` saknas men `STOP` finns — den separata
+  Stop-knappen döljs då för att undvika dubblett.
+- **Paus under Spotify-uppspelning återställde titeln till "Url
+  Stream"** — `_metaAttributes()`s villkor kollade bara `massSt.state
+  === 'playing'`; en pausning flyttar även `mass_entity` till `paused`,
+  vilket gjorde att villkoret slog av och föll tillbaka till HEOS
+  entitetens skräp-metadata. Fixat: villkoret tillåter nu både
+  `playing` OCH `paused`.
+- **Tryck på ett soloframträdande, redan fokuserat rums egen platta**
+  kunde kasta `Entity media_player.hallen is not joined to a group` —
+  `_computeGroups()` klassar ett soloSpelande/pausat rum som sin egen
+  "grupp om 1" enbart för fokus-/UI-syften (se punkt 8 om samma
+  öppna fråga i Active Groups-raden, [#7](https://github.com/johro897/music-multiroom-card/issues/7)),
+  men HEOS har ALDRIG faktiskt grupperat entiteten — ett riktigt `join`
+  har aldrig skett. `_onRoomTap()`s "owning"-gren anropade ändå `unjoin`
+  blint. Fixat: om `owning.memberEntities.length < 2` (ingen riktig
+  HEOS-grupp) rensas bara fokus lokalt, inget tjänsteanrop görs alls.
 
 ## Screenshot
 

@@ -238,6 +238,33 @@ favorites:
 
 ## Changelog
 
+### 0.7.0 (beta-0.7.3)
+
+Three fixes found live during real-world beta use (not scripted testing this
+time — actual daily use surfaced these):
+
+- Fix: radio playback couldn't be paused — some sources (confirmed live:
+  HEOS radio streams) don't support pause at all, only stop, and HA
+  rejects `media_play_pause` outright on an entity that doesn't support
+  it (`does not support action media_player.media_play_pause` in the
+  log). The main transport button now falls back to acting as Stop when
+  pause isn't supported, instead of failing silently-from-the-UI's
+  perspective — no separate Stop button is shown in that case, since the
+  main button already covers it.
+- Fix: pausing Spotify content reverted the Now Playing title/artist to
+  HEOS's generic "Url Stream" placeholder. The `0.7.2` metadata fix only
+  preferred the `mass_entity`'s attributes while it was `playing` —
+  pausing flips it to `paused` too, and the check needed to allow both.
+- Fix: tapping a solo playing/paused room's own tile could throw `Entity
+  ... is not joined to a group` in the log. A room playing by itself
+  counts as its own "group of 1" internally for focus purposes, but HEOS
+  itself never actually grouped it — so the tap handler was calling
+  `unjoin` on an entity HEOS didn't consider joined at all. Tapping it
+  now just clears focus instead, no service call. (Related to, but not
+  the same bug as, [#7](https://github.com/johro897/music-multiroom-card/issues/7)'s
+  display issue — both stem from solo rooms being a card-side-only
+  "group of 1" concept.)
+
 ### 0.7.0 (beta-0.7.2)
 
 - **Confirmed live**: grouping four rooms via the card (native HEOS) and

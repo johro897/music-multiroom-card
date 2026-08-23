@@ -184,6 +184,7 @@
   // core's homeassistant/components/media_player/const.py (2026-08-23) —
   // used to only show Stop/Mute when the entity actually reports support
   // for them, rather than assuming every HEOS player has both.
+  const FEATURE_PAUSE = 1;
   const FEATURE_VOLUME_MUTE = 8;
   const FEATURE_STOP = 4096;
 
@@ -407,14 +408,19 @@
     // ("metadata shows as URL stream due to HEOS API constraints"). The
     // room's mass_entity is the one that actually knows what's playing,
     // so prefer its attributes for display whenever it's actively
-    // playing — but never for `state`/`supported_features`, since
+    // relevant — but never for `state`/`supported_features`, since
     // transport commands and availability still target the HEOS entity.
+    // Checks 'paused' as well as 'playing': found live (2026-08-23) that
+    // pausing Spotify content flips the mass_entity to 'paused' too, and
+    // checking only 'playing' meant the title/artist reverted to HEOS's
+    // "Url Stream" placeholder the instant you paused.
     _metaAttributes(leaderEntity) {
       const hass = this._hass;
       const st = hass.states[leaderEntity];
       const room = this._config?.rooms.find((r) => r.entity === leaderEntity);
       const massSt = room?.mass_entity ? hass.states[room.mass_entity] : null;
-      return massSt && massSt.state === 'playing' ? massSt.attributes : st?.attributes;
+      const massActive = massSt && (massSt.state === 'playing' || massSt.state === 'paused');
+      return massActive ? massSt.attributes : st?.attributes;
     }
 
     // ---- group derivation ------------------------------------------------
@@ -562,6 +568,17 @@
       if (owning && owning.leaderEntity !== focusedLeader) return; // locked
 
       if (owning) {
+        // A room playing/paused solo counts as its own "group of 1" in
+        // _computeGroups() purely for focus/UI purposes — HEOS itself
+        // never considered it grouped (no real join ever happened), so
+        // there's nothing to unjoin. Calling `unjoin` on it anyway fails
+        // live with "Entity ... is not joined to a group" (found
+        // 2026-08-23) — tapping it again should just clear focus.
+        if (owning.memberEntities.length < 2) {
+          this._focusedGroupId = null;
+          this._render();
+          return;
+        }
         if (this._guardPending(entity)) return;
         const remaining = owning.memberEntities.filter((id) => id !== entity);
         if (remaining.length >= 2) {
@@ -822,6 +839,19 @@
       const picture = meta?.entity_picture;
       const features = st?.attributes?.supported_features || 0;
       const canStop = !!(features & FEATURE_STOP);
+      // Some sources — confirmed live (2026-08-23): HEOS radio streams —
+      // don't support pause at all, only stop (pausing a live stream
+      // isn't meaningful the way pausing a track is). Calling
+      // media_play_pause there fails outright ("does not support
+      // action"). Fall the main transport button back to Stop in that
+      // case instead, and skip the separate Stop button so it isn't
+      // shown twice.
+      const canPause = !!(features & FEATURE_PAUSE);
+      const mainUsesStop = isPlaying && !canPause && canStop;
+      const mainCmd = mainUsesStop ? 'stop' : 'play_pause';
+      const mainIcon = isPlaying ? (mainUsesStop ? iconStop() : iconPause()) : iconPlay();
+      const mainLabelKey = isPlaying ? (mainUsesStop ? 'stop' : 'pause') : 'play';
+      const showExtraStop = canStop && !mainUsesStop;
       const names = focusedGroup.memberEntities.map(
         (id) => this._config.rooms.find((r) => r.entity === id)?.name || id
       );
@@ -864,12 +894,10 @@
           <div class="hero-spacer"></div>
           <div class="hero-transport">
             <button class="tbtn" data-action="transport" data-cmd="prev" title="${escHtml(t(hass, 'previous'))}" aria-label="${escHtml(t(hass, 'previous'))}">${iconPrev()}</button>
-            <button class="tbtn tbtn-main" data-action="transport" data-cmd="play_pause" title="${escHtml(t(hass, isPlaying ? 'pause' : 'play'))}" aria-label="${escHtml(t(hass, isPlaying ? 'pause' : 'play'))}">${
-        isPlaying ? iconPause() : iconPlay()
-      }</button>
+            <button class="tbtn tbtn-main" data-action="transport" data-cmd="${mainCmd}" title="${escHtml(t(hass, mainLabelKey))}" aria-label="${escHtml(t(hass, mainLabelKey))}">${mainIcon}</button>
             <button class="tbtn" data-action="transport" data-cmd="next" title="${escHtml(t(hass, 'next'))}" aria-label="${escHtml(t(hass, 'next'))}">${iconNext()}</button>
             ${
-              canStop
+              showExtraStop
                 ? `<button class="tbtn" data-action="transport" data-cmd="stop" title="${escHtml(t(hass, 'stop'))}" aria-label="${escHtml(t(hass, 'stop'))}">${iconStop()}</button>`
                 : ''
             }
