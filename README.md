@@ -1,10 +1,13 @@
 # Music Multiroom Card
 
 A full-page Home Assistant Lovelace card for controlling whole-home audio.
-Built and tested against Home Assistant's **HEOS** integration. It uses
-HA's generic `media_player` join/unjoin/`play_media` services, but is not
-tested against — and makes no compatibility claim for — Sonos, Bluesound,
-or any other platform.
+Built and tested against Home Assistant's **HEOS** integration for
+grouping, volume, and radio. Spotify favorites are the one exception:
+they're played through **Music Assistant** instead, if you set it up —
+see [Architecture](#architecture-two-integrations-on-purpose) below for
+why. It uses HA's generic `media_player` join/unjoin/`play_media`
+services, but is not tested against — and makes no compatibility claim
+for — Sonos, Bluesound, or any other platform.
 
 ![Music Multiroom Card overview](screenshots/overview.svg)
 
@@ -41,6 +44,48 @@ or any other platform.
   themes both work — only the group-identity color coding is a fixed
   palette, since it needs to visually distinguish arbitrary simultaneous
   groups from each other).
+
+## Architecture: two integrations, on purpose
+
+This card talks to **two different Home Assistant integrations for the
+same physical speakers**, which looks odd at first — here's why.
+
+HEOS's own "Spotify" music source only ever plays back whatever is synced
+into HEOS's own library. It is *not* the same thing as your actual, live
+Spotify account — there's no way to get HEOS to play a specific one of
+your real playlists on demand from outside the HEOS app itself. [Music
+Assistant](https://www.music-assistant.io/) closes that gap: its Spotify
+provider logs into your real account and decodes the actual audio, then
+hands HEOS a plain stream to play — which is indistinguishable from any
+other "URL Stream" source as far as HEOS is concerned.
+
+So the card splits by what each integration is actually good at:
+
+- **Grouping, volume, transport, and Radio favorites** stay on the native
+  `heos` integration, unchanged from every earlier version of this card
+  — it's mature, already deeply tested (see the changelog below), and
+  there's no reason to route any of that through anything else.
+- **Spotify favorites**, and only Spotify favorites, are browsed and
+  played through **Music Assistant** instead — real playlists from your
+  real account, not HEOS's limited synced copy.
+
+Music Assistant is entirely **optional**. Skip it and the card works
+exactly like it always has, minus real Spotify playback — every room
+just won't have a `mass_entity` set, and its Spotify tab will say so.
+Where it *is* set up, it only ever gets `play_media` calls for Spotify
+content; it never touches grouping, volume, or anything else, and the
+two integrations are never asked to control the same thing at the same
+time — see [How it works](#how-it-works) for exactly which service call
+goes where.
+
+If you want to set Music Assistant up: it runs as a separate server
+(Docker, or a Home Assistant add-on) with its own HEOS player provider
+that talks to your speakers directly over the LAN — it does **not** go
+through HA's `heos` integration at all, which is exactly why the two can
+coexist safely. See this repo's `CLAUDE.md` for a full deployment and
+troubleshooting log (including a real firewall issue that silently
+blocked audio while looking completely fine everywhere else) if you hit
+problems getting Music Assistant itself working.
 
 ## Installation
 
@@ -124,17 +169,27 @@ favorites:
 - **A room won't join a group.** Confirm the entity is actually a HEOS
   `media_player` and is online (state isn't `unavailable`/`unknown` —
   those rooms show `—` instead of a status in the grid).
-- **Browse list is empty, or a source you expect (like "Spotify") is
+- **Radio browse list is empty, or a source you expect (like "TuneIn") is
   missing.** Make sure the room you're browsing from is online, and that
   the relevant service is actually linked in the HEOS app — the browser
   only shows what HEOS itself already knows about, and can't discover a
-  Spotify/TuneIn/etc. account that isn't set up there.
+  TuneIn/Favorites source that isn't set up there. (This is specifically
+  about **Radio** browsing — Spotify browsing goes through Music
+  Assistant since `0.7.0` and isn't affected by anything in the HEOS
+  app; see the entry below if that's the one that's empty.)
+- **Spotify browse list is empty, or won't load.** Confirm the room's
+  `mass_entity` is actually online in Home Assistant, and that Music
+  Assistant's own Spotify provider is configured and logged in — the
+  card only relays whatever Music Assistant's `browse_media` returns, it
+  can't discover an account Music Assistant itself doesn't know about.
 - **`Unable to play media: Invalid playlist '...'`** in the HA log. This
-  means a favorite's `media_content_id` doesn't match anything HEOS
-  recognizes — almost always a leftover from an older config where
-  Spotify favorites were typed in by hand (pre-0.6.3). Remove it and
-  re-add it through the editor's browse picker instead; typed-in values
-  were never reliable (see 0.6.3's changelog entry for why).
+  is a HEOS-specific error, so it can only come from a **Radio**
+  favorite (or a genuinely ancient config from before `0.6.3`, when
+  Spotify favorites also still went through HEOS) — it means a
+  favorite's `media_content_id` doesn't match anything HEOS recognizes.
+  Remove it and re-add it through the editor's browse picker instead.
+  Since `0.7.0`, a normally-added Spotify favorite can't hit this error
+  at all, because it never talks to HEOS in the first place.
 - **Card looks broken after an update.** Check **Settings → Dashboards →
   Resources** for a duplicate registration of the card (an old manually
   added resource alongside a HACS-managed one) — see this project's

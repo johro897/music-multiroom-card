@@ -1167,10 +1167,11 @@
           mass_entity: r.mass_entity || '',
         })),
         favorites: {
-          // Spotify favorites are now sourced from the same browse picker
-          // as radio (both come from HEOS's Favorites/music-source tree),
-          // so both need the same `??` (not `||`) empty-string-preserving
-          // normalization — see the radio comment below for why.
+          // Both arrays use `??` (not `||`) for media_content_type — see
+          // the radio comment below for why an empty string must survive.
+          // Spotify and radio come from two separate browse backends
+          // since 0.7.0 (Music Assistant vs HEOS respectively), but the
+          // same empty-string gotcha applies to both.
           spotify: (config?.favorites?.spotify || []).map((f) => ({
             name: f.name || '',
             icon: f.icon || 'mdi:spotify',

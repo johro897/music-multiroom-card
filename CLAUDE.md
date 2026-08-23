@@ -357,8 +357,38 @@ representativt nog för en riktig release.
   `group_members` som orderoberoende mängd). Lägg till nya bevakade
   attribut här OM `_render()` börjar läsa fler `hass.states[...]`-fält,
   annars missas uppdateringar tyst — samma gotcha-mönster som
-  `tplink-switch-card`s `_statesChanged()`.
+  `tplink-switch-card`s `_statesChanged()`. Sedan `0.7.0` bevakar
+  `_watchedEntities()` även varje rums `mass_entity` (inte bara
+  `entity`), av samma anledning — se `_metaAttributes()`.
 - Säkerhetsgranskning (2026-08-23): alla ställen där användar-/HEOS-text
   hamnar i `innerHTML` går genom `escHtml()` — kontrollerat rad för rad,
   inga luckor hittade. Ingen `eval`, inga externa nätverksanrop, ingen
   localStorage/cookies. Håll detta mönster vid framtida ändringar.
+- **Uppföljande säkerhets- och prestandagranskning inför `0.7.0`
+  (2026-08-23),** hela filen läst rad för rad efter alla MA-ändringar:
+  - Samma escHtml-mönster håller för allt nytt — `mass_entity`-fältets
+    värde, `_metaAttributes()`s titel/artist/bild (oavsett om de kommer
+    från HEOS- eller MA-entiteten, samma tillitsnivå som tidigare —
+    backend-data från `hass.states`, aldrig rå extern input), MA:s
+    bläddringstitlar. Inga nya `innerHTML`-vägar saknar escaping.
+  - `_fetchBrowseNode()`/`play_media`-anropen skickar `item.media_
+    content_type`/`media_content_id` direkt som fält i ett JS-objekt till
+    HA:s websocket-API — aldrig strängkonkatinerat till HTML eller ett
+    kommando, så ingen injektionsrisk även om en illvillig MA/HEOS-källa
+    skulle returnera konstiga tecken i ett fält.
+  - Prestanda: `_watchedEntities()`s utökning till `mass_entity` är en
+    ren listbreddning, ingen ny algoritmisk komplexitet —
+    `_isDirty()`/`_computeGroups()`/`_metaAttributes()` är alla O(antal
+    rum), försumbart för realistiska rumsantal. `_metaAttributes()`
+    anropas per render OCH en gång per sekund från `_tickProgress()`, men
+    gör bara enkla objektuppslag, ingen ny loop eller nätverksanrop —
+    ingen risk för samma "full re-render varje sekund"-problem som
+    `0.5.4` löste ursprungligen.
+  - En upptäckt men medvetet ej fixad kant: om `_startBrowse()`s
+    auto-borrning in i "Playlists" (se ovan) failar EFTER att rot-nivån
+    redan hämtats, sätts både `browse.error` och ett icke-tomt
+    `browse.stack` — rendern visar felmeddelandet (kollas före
+    `stack.length` i `_renderFavSource()`), så användaren ser fel trots
+    att rot-bläddringen faktiskt lyckades. Kosmetiskt, inte en
+    funktionell bugg (ett nytt bläddringsförsök löser det), bedömt inte
+    värt att komplicera felhanteringen för.
