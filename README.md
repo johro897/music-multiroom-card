@@ -1,10 +1,10 @@
 # Music Multiroom Card
 
 A full-page Home Assistant Lovelace card for controlling whole-home audio.
-Built around the generic `media_player` join/unjoin/`play_media` services —
-targets HEOS in this first version (also implemented by Sonos, Bluesound and
-other grouping-capable platforms, so it may work unmodified there too, though
-only HEOS has been tested).
+Built and tested against Home Assistant's **HEOS** integration. It uses
+HA's generic `media_player` join/unjoin/`play_media` services, but is not
+tested against — and makes no compatibility claim for — Sonos, Bluesound,
+or any other platform.
 
 ![Music Multiroom Card overview](screenshots/overview.svg)
 
@@ -138,6 +138,16 @@ favorites:
   been exercised against real data at every level.
 
 ## Changelog
+
+### 0.5.6
+
+- Fix: a failed service call (join, unjoin, play, transport, volume) was
+  silent — it only surfaced as an unhandled promise rejection in the
+  browser console, invisible on a wall-mounted tablet nobody's actively
+  debugging. Now shown via Home Assistant's own notification toast.
+- Docs: dropped the "should also work with Sonos/Bluesound" claim — this
+  card is built and tested against HEOS only, and makes no compatibility
+  promise beyond that.
 
 ### 0.5.5
 

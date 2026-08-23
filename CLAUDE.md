@@ -6,10 +6,13 @@ Full-page Lovelace-kort för multi-room ljudstyrning, byggt mot HA:s generiska
 features.
 
 **Uppströmsberoende:** Home Assistants inbyggda `heos`-integration
-(bygger på `pyheos`). Inget annat tredjepartsberoende. Grundfunktionerna
-(join/unjoin/play_media) är dock generiska `media_player`-tjänster som även
-Sonos och Bluesound implementerar — kortet är inte hårdkodat mot HEOS
-specifikt, men bara HEOS är testat i v1.
+(bygger på `pyheos`). Inget annat tredjepartsberoende. Kortet är byggt och
+TESTAT mot HEOS specifikt — även om join/unjoin/play_media tekniskt är
+generiska `media_player`-tjänster som även Sonos/Bluesound implementerar,
+görs INGEN kompatibilitetsutfästelse för andra plattformar (borttaget
+2026-08-23 på ägarens begäran — "vi anger att vi testar med HEOS för att
+inte lova för mycket"). Om kortet råkar fungera mot en annan plattform är
+det en bonus, inte ett designmål eller något som testas.
 
 ## Bakgrund / design
 

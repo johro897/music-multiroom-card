@@ -1,8 +1,10 @@
 /**
  * Music Multiroom Card
- * Full-page multi-room audio control card for Home Assistant, built around the
- * generic media_player join/unjoin/play_media services (targets HEOS in v1;
- * also implemented by Sonos/Bluesound). No build chain, no external deps.
+ * Full-page multi-room audio control card for Home Assistant, built and
+ * tested against the HEOS integration's media_player entities. Uses HA's
+ * generic media_player join/unjoin/play_media services, but only HEOS is
+ * targeted/tested — no claim of Sonos/Bluesound compatibility. No build
+ * chain, no external deps.
  */
 (function () {
   'use strict';
@@ -41,6 +43,11 @@
       pause: 'Pause',
       next: 'Next',
       rooms_required: '"rooms" must be a non-empty list of media_player entities',
+      error_join: "Couldn't add the room to the group",
+      error_unjoin: "Couldn't remove the room from the group",
+      error_play: "Couldn't start playback",
+      error_volume: "Couldn't change the volume",
+      error_transport: "Couldn't control playback",
       editor_rooms: 'Rooms',
       editor_add_room: 'Add room',
       editor_room_entity: 'Media player entity',
@@ -87,6 +94,11 @@
       pause: 'Pausa',
       next: 'Nästa',
       rooms_required: '"rooms" måste vara en icke-tom lista med media_player-entiteter',
+      error_join: 'Kunde inte lägga till rummet i gruppen',
+      error_unjoin: 'Kunde inte ta bort rummet från gruppen',
+      error_play: 'Kunde inte starta uppspelning',
+      error_volume: 'Kunde inte ändra volymen',
+      error_transport: 'Kunde inte styra uppspelningen',
       editor_rooms: 'Rum',
       editor_add_room: 'Lägg till rum',
       editor_room_entity: 'Media player-entitet',
@@ -301,11 +313,9 @@
     }
 
     // ---- group derivation ------------------------------------------------
-    // [UNVERIFIED] Assumes HA's generic media_player "group_members"
-    // attribute is populated by the heos platform the same way as other
-    // grouping-capable platforms (Sonos/Bluesound). Confirm via Developer
-    // Tools -> States on a real HEOS entity, solo and grouped, before
-    // trusting this in production. See CLAUDE.md.
+    // Confirmed from HEOS's actual _get_group_members() source (2026-08-23):
+    // the "group_members" attribute lists the leader + all members,
+    // symmetric across every grouped entity. See CLAUDE.md.
     _computeGroups() {
       const rooms = this._config?.rooms || [];
       if (!this._hass) return [];
@@ -411,6 +421,23 @@
       }
     }
 
+    // Surfaces a failed service call via HA's own toast/notification system
+    // rather than failing silently — a fire-and-forget callService() that
+    // rejects otherwise becomes an unhandled promise rejection, visible
+    // only in devtools, which is useless on a wall-mounted tablet nobody's
+    // debugging (this is exactly how the "System error -9" HEOS error was
+    // originally missed — only found by checking the HA log directly).
+    _notifyError(message, err) {
+      console.error('music-multiroom-card:', message, err);
+      this.dispatchEvent(
+        new CustomEvent('hass-notification', {
+          detail: { message },
+          bubbles: true,
+          composed: true,
+        })
+      );
+    }
+
     _guardPending(entity) {
       if (this._pendingEntities.has(entity)) return true;
       this._pendingEntities.add(entity);
@@ -441,10 +468,20 @@
           // leader.
           const newLeader = this._config.rooms.find((r) => remaining.includes(r.entity))?.entity || remaining[0];
           const others = remaining.filter((id) => id !== newLeader);
-          this._hass.callService('media_player', 'join', { group_members: others }, { entity_id: newLeader });
+          this._hass
+            .callService('media_player', 'join', { group_members: others }, { entity_id: newLeader })
+            .catch((err) => {
+              this._pendingEntities.delete(entity);
+              this._notifyError(t(this._hass, 'error_unjoin'), err);
+            });
           this._focusedGroupId = newLeader;
         } else {
-          this._hass.callService('media_player', 'unjoin', {}, { entity_id: entity });
+          this._hass
+            .callService('media_player', 'unjoin', {}, { entity_id: entity })
+            .catch((err) => {
+              this._pendingEntities.delete(entity);
+              this._notifyError(t(this._hass, 'error_unjoin'), err);
+            });
           this._focusedGroupId = null;
         }
         this._render();
@@ -461,12 +498,17 @@
         // grouped.
         const focusedGroup = groups.find((g) => g.leaderEntity === focusedLeader);
         const desiredMembers = focusedGroup ? [...focusedGroup.memberEntities, entity] : [focusedLeader, entity];
-        this._hass.callService(
-          'media_player',
-          'join',
-          { group_members: Array.from(new Set(desiredMembers)) },
-          { entity_id: focusedLeader }
-        );
+        this._hass
+          .callService(
+            'media_player',
+            'join',
+            { group_members: Array.from(new Set(desiredMembers)) },
+            { entity_id: focusedLeader }
+          )
+          .catch((err) => {
+            this._pendingEntities.delete(focusedLeader);
+            this._notifyError(t(this._hass, 'error_join'), err);
+          });
         return;
       }
 
@@ -478,12 +520,14 @@
       const groups = this._computeGroups();
       const focusedLeader = this._resolveFocusedLeader(groups);
       if (!focusedLeader || !this._hass) return;
-      this._hass.callService(
-        'media_player',
-        'play_media',
-        { media_content_type: mediaContentType, media_content_id: mediaContentId },
-        { entity_id: focusedLeader }
-      );
+      this._hass
+        .callService(
+          'media_player',
+          'play_media',
+          { media_content_type: mediaContentType, media_content_id: mediaContentId },
+          { entity_id: focusedLeader }
+        )
+        .catch((err) => this._notifyError(t(this._hass, 'error_play'), err));
     }
 
     _onTransport(cmd) {
@@ -491,12 +535,16 @@
       const focusedLeader = this._resolveFocusedLeader(groups);
       if (!focusedLeader || !this._hass) return;
       const svc = cmd === 'play_pause' ? 'media_play_pause' : cmd === 'next' ? 'media_next_track' : 'media_previous_track';
-      this._hass.callService('media_player', svc, {}, { entity_id: focusedLeader });
+      this._hass
+        .callService('media_player', svc, {}, { entity_id: focusedLeader })
+        .catch((err) => this._notifyError(t(this._hass, 'error_transport'), err));
     }
 
     _setRoomVolume(entity, sliderValue) {
       if (!entity || !this._hass) return;
-      this._hass.callService('media_player', 'volume_set', { volume_level: sliderValue / 100 }, { entity_id: entity });
+      this._hass
+        .callService('media_player', 'volume_set', { volume_level: sliderValue / 100 }, { entity_id: entity })
+        .catch((err) => this._notifyError(t(this._hass, 'error_volume'), err));
     }
 
     _setGroupVolume(sliderValue) {
@@ -506,7 +554,9 @@
       // Schema confirmed from home-assistant/core's heos/services.yaml
       // (2026-08-23): `volume_level` (0-1) as data, entity as target — not
       // `level` in the data payload as originally guessed.
-      this._hass.callService('heos', 'group_volume_set', { volume_level: sliderValue / 100 }, { entity_id: focusedLeader });
+      this._hass
+        .callService('heos', 'group_volume_set', { volume_level: sliderValue / 100 }, { entity_id: focusedLeader })
+        .catch((err) => this._notifyError(t(this._hass, 'error_volume'), err));
     }
 
     // ---- render -------------------------------------------------------
@@ -1267,7 +1317,7 @@
   window.customCards.push({
     type: CARD_NAME,
     name: 'Music Multiroom Card',
-    description: 'Full-page multi-room audio control for HEOS (and other join/unjoin capable media players).',
+    description: 'Full-page multi-room audio control for Home Assistant HEOS.',
     preview: false,
   });
 })();
