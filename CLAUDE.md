@@ -186,14 +186,14 @@ HEOS-installation eftersom källkoden inte visar allt (t.ex. exakta
    bara döljs) — provkör mot en riktig Spotify-låt/HEOS-favorit live för
    att se att den faktiskt ritas och tickar rätt.
 9. **Spotify-via-MA (`0.7.0`, [#9](https://github.com/johro897/music-multiroom-card/issues/9)).**
-   Två separata obekräftade punkter, oberoende av varandra:
-   - Om `play_media` mot ett rums `mass_entity` faktiskt spelar ut över
-     HELA en HEOS-grupp som formats via native `heos.join`, eller bara på
-     den fysiska enheten själv. Rimligt antagande (gruppering är fysiskt
-     HEOS-tillstånd som MA:s egen HEOS-provider också läser via sin egen
-     anslutning) men INTE bekräftat — MA har även en egen separat "Sync
-     Group Player"-provider (synlig i loggarna) som skulle kunna ha ett
-     eget, icke-överlappande gruppbegrepp.
+   - ~~Om `play_media` mot ett rums `mass_entity` faktiskt spelar ut över
+     HELA en HEOS-grupp som formats via native `heos.join`~~ **BEKRÄFTAT
+     LIVE (2026-08-23):** ägaren grupperade fyra rum via kortet (native
+     HEOS) och spelade en Spotify-favorit — hero-badgen visade "Playing
+     on: Hallen, Matplatsen, Lounge, Köket", alla fyra. Antagandet höll:
+     gruppering är fysiskt HEOS-tillstånd, och att spela mot `mass_entity`
+     för ledaren räcker för att hela den fysiska gruppen ska spela, oavsett
+     att MA:s egen "Sync Group Player"-provider också finns.
    - ~~Music Assistants `browse_media`-svarsform för Spotify-innehåll~~
      **DELVIS BEKRÄFTAT LIVE (2026-08-23):** till skillnad från allt som
      observerats från HEOS, där ett objekt antingen är bläddringsbart
@@ -301,6 +301,33 @@ liknande symptom dyker upp igen:**
    vara en helt mundan parkopplings-fråga (AirPlay 2 kräver PIN-inmatning
    i MA:s webbgränssnitt) — inte kopplat till ovanstående alls, värt att
    inte blanda ihop symptomen om det dyker upp igen.
+
+**Två fynd från `beta-0.7.1`/`beta-0.7.2`-testningen (2026-08-23), båda
+fixade samma dag:**
+
+- **HEOS-entiteten rapporterar bokstavligen `media_title`/`media_artist:
+  "Url Stream"`** för allt som MA skickar dit — bekräftat live (matchar
+  MA:s egen dokumentation om metadata-begränsningen). Hero:t läste bara
+  från den fokuserade ledarens HEOS-entitet, så en Spotify-låt visade
+  "Url Stream" istället för riktig titel/artist, och progress-baren
+  saknades helt (HEOS-entiteten saknar också giltig
+  `media_position`/`media_duration` för MA-källor). Fixat med en ny
+  `_metaAttributes()`-hjälpmetod: om rummets `mass_entity` själv är
+  `playing`, används DESS attribut för titel/artist/bild/position/
+  duration istället för HEOS-entitetens — men `state`/
+  `supported_features` (vad som styr transportknapparnas synlighet)
+  förblir alltid HEOS-entitetens, eftersom det är dit kommandona faktiskt
+  skickas. `_watchedEntities()` bevakar nu även varje rums `mass_entity`
+  (inte bara `entity`), annars skulle ett låtbyte i MA aldrig trigga en
+  omritning eftersom det inte rör HEOS-entitetens egna attribut alls.
+- **Bläddrings-picker för Spotify öppnade på MA:s rot-meny**
+  (Artists/Albums/Tracks/Playlists/Radio stations/Podcasts) — ingen
+  favorit på ett multiroom-kort är rimligen en enskild artist eller ett
+  helt album. Fixat: `_startBrowse('spotify')` borrar nu automatiskt in i
+  "Playlists" (matchat på titel, hittat bland rot-barnen) direkt efter
+  rot-anropet, med rot-nivån kvar en nivå bakåt via "Back" om man ändå
+  vill åt något annat. Radiobläddringen (HEOS) är oförändrad — dess
+  rot-nivå (alla musikkällor platt) var redan direkt användbar.
 
 ## Screenshot
 

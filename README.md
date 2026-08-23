@@ -174,13 +174,31 @@ favorites:
   confirmed against a live Music Assistant entity yet — the picker reuses
   the same generic tree-walking logic as HEOS's, but the HEOS side is the
   one that's actually been exercised live so far.
-- **Whether `play_media` against a `mass_entity` plays across a HEOS group
-  formed via the native integration** isn't confirmed yet — grouping is
-  physical HEOS state that Music Assistant's own HEOS provider should also
-  see, but Music Assistant also has its own separate "Sync Group Player"
-  concept that might not automatically follow it. First real beta test.
+- **Music Assistant reports generic "Url Stream" metadata on the HEOS
+  entity itself** for anything it plays — the card now reads display
+  metadata (title/artist/art/position) from a room's `mass_entity`
+  instead whenever it's actively playing, but this is a real HEOS/Music
+  Assistant limitation worth knowing about if you ever look at the HEOS
+  entity directly in Developer Tools.
 
 ## Changelog
+
+### 0.7.0 (beta-0.7.2)
+
+- **Confirmed live**: grouping four rooms via the card (native HEOS) and
+  playing a Spotify favorite plays across the whole group, not just the
+  leader — the biggest open question from `0.7.0`'s design is resolved.
+- Fix: the Now Playing hero showed the literal text "Url Stream" as both
+  title and artist for Spotify content, with no progress bar — HEOS
+  reports exactly that generic placeholder for anything Music Assistant
+  hands it to play (a real HEOS/MA limitation, not a bug in either). The
+  card now reads title/artist/artwork/position from a room's
+  `mass_entity` instead, whenever it's the one actually playing.
+- Fix: the Spotify browse picker opened on Music Assistant's root menu
+  (Artists/Albums/Tracks/Playlists/Radio stations/Podcasts) — nobody
+  wants to pick a favorite from "Artists" on a multiroom dashboard. It
+  now jumps straight into "Playlists", with the root still one "Back"
+  away if that's not what you wanted this time.
 
 ### 0.7.0 (beta-0.7.1)
 

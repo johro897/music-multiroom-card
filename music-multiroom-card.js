@@ -324,7 +324,17 @@
     }
 
     _watchedEntities() {
-      return (this._config?.rooms || []).map((r) => r.entity).filter(Boolean);
+      const rooms = this._config?.rooms || [];
+      const ids = [];
+      for (const r of rooms) {
+        if (r.entity) ids.push(r.entity);
+        // Also watch each room's mass_entity — the hero pulls display
+        // metadata from it (see _metaAttributes) whenever it's playing,
+        // so a track change there needs to trigger a re-render even
+        // though it never touches the HEOS entity's own attributes.
+        if (r.mass_entity) ids.push(r.mass_entity);
+      }
+      return ids;
     }
 
     // Compares only the fields this card actually renders, not full state
@@ -381,13 +391,30 @@
       const focusedLeader = this._resolveFocusedLeader(groups);
       const st = focusedLeader ? this._hass.states[focusedLeader] : null;
       if (st?.state !== 'playing') return;
-      const duration = st.attributes?.media_duration;
-      const position = st.attributes?.media_position;
-      const updatedAt = st.attributes?.media_position_updated_at;
+      const meta = this._metaAttributes(focusedLeader);
+      const duration = meta?.media_duration;
+      const position = meta?.media_position;
+      const updatedAt = meta?.media_position_updated_at;
       if (typeof duration !== 'number' || duration <= 0 || typeof position !== 'number' || !updatedAt) return;
       const elapsed = (Date.now() - new Date(updatedAt).getTime()) / 1000;
       const current = Math.min(duration, Math.max(0, position + elapsed));
       fill.style.width = `${(current / duration) * 100}%`;
+    }
+
+    // HEOS reports generic, useless metadata ("Url Stream"/"Url Stream")
+    // for anything Music Assistant hands it to play — confirmed live
+    // (2026-08-23), matches Music Assistant's own documented limitation
+    // ("metadata shows as URL stream due to HEOS API constraints"). The
+    // room's mass_entity is the one that actually knows what's playing,
+    // so prefer its attributes for display whenever it's actively
+    // playing — but never for `state`/`supported_features`, since
+    // transport commands and availability still target the HEOS entity.
+    _metaAttributes(leaderEntity) {
+      const hass = this._hass;
+      const st = hass.states[leaderEntity];
+      const room = this._config?.rooms.find((r) => r.entity === leaderEntity);
+      const massSt = room?.mass_entity ? hass.states[room.mass_entity] : null;
+      return massSt && massSt.state === 'playing' ? massSt.attributes : st?.attributes;
     }
 
     // ---- group derivation ------------------------------------------------
@@ -786,9 +813,13 @@
       const st = hass.states[focusedLeader];
       const isPlaying = st?.state === 'playing';
       const isPaused = st?.state === 'paused';
-      const title = st?.attributes?.media_title || t(hass, 'no_media');
-      const artist = st?.attributes?.media_artist || '';
-      const picture = st?.attributes?.entity_picture;
+      // See _metaAttributes: HEOS reports generic "Url Stream" metadata
+      // for anything Music Assistant hands it, so display fields come
+      // from the room's mass_entity when it's the one actually playing.
+      const meta = this._metaAttributes(focusedLeader);
+      const title = meta?.media_title || t(hass, 'no_media');
+      const artist = meta?.media_artist || '';
+      const picture = meta?.entity_picture;
       const features = st?.attributes?.supported_features || 0;
       const canStop = !!(features & FEATURE_STOP);
       const names = focusedGroup.memberEntities.map(
@@ -801,9 +832,9 @@
       // actually populates media_position/media_duration for every source
       // (radio streams typically have no duration at all, in which case
       // the bar is correctly just hidden below).
-      const duration = st?.attributes?.media_duration;
-      const position = st?.attributes?.media_position;
-      const updatedAt = st?.attributes?.media_position_updated_at;
+      const duration = meta?.media_duration;
+      const position = meta?.media_position;
+      const updatedAt = meta?.media_position_updated_at;
       const hasProgress =
         (isPlaying || isPaused) && typeof duration === 'number' && duration > 0 && typeof position === 'number' && !!updatedAt;
       let progressPct = 0;
@@ -1473,6 +1504,17 @@
       return this._config.rooms.find((r) => r.entity === roomEntity)?.mass_entity || null;
     }
 
+    // Shared browse_media call — `item` omitted fetches the root, passed
+    // fetches that item's children. Returns a stack entry or throws.
+    async _fetchBrowseNode(targetEntity, item) {
+      const result = await this._hass.connection.sendMessagePromise(
+        item
+          ? { type: 'media_player/browse_media', entity_id: targetEntity, media_content_type: item.media_content_type, media_content_id: item.media_content_id }
+          : { type: 'media_player/browse_media', entity_id: targetEntity }
+      );
+      return { title: result.title || item?.title || '', items: result.children || [] };
+    }
+
     async _startBrowse(category) {
       const isSpotify = category === 'spotify';
       const browse = isSpotify ? this._spotifyBrowse : this._radioBrowse;
@@ -1490,13 +1532,19 @@
         // [UNVERIFIED] standard HA media browser websocket command. The
         // HEOS-entity shape (title/children/can_expand) was confirmed
         // live; the Music Assistant entity's shape for Spotify content has
-        // not been — confirm before relying on this in production.
-        const result = await this._hass.connection.sendMessagePromise({
-          type: 'media_player/browse_media',
-          entity_id: targetEntity,
-        });
+        // only partially been (see CLAUDE.md).
+        const root = await this._fetchBrowseNode(targetEntity);
+        browse.stack = [root];
+        // Nobody wants to add favorites from Artists/Albums/Tracks/Radio
+        // stations/Podcasts on a multiroom dashboard — jump straight into
+        // "Playlists" for Spotify (confirmed live: it's always present at
+        // the root) while leaving the root reachable via Back, in case
+        // that's not actually what someone wants this time.
+        if (isSpotify) {
+          const playlists = root.items.find((it) => it.can_expand && /playlist/i.test(it.title || ''));
+          if (playlists) browse.stack.push(await this._fetchBrowseNode(targetEntity, playlists));
+        }
         browse.loading = false;
-        browse.stack = [{ title: result.title || '', items: result.children || [] }];
       } catch (err) {
         browse.loading = false;
         browse.error = err;
@@ -1516,14 +1564,8 @@
       selected.clear();
       this._render();
       try {
-        const result = await this._hass.connection.sendMessagePromise({
-          type: 'media_player/browse_media',
-          entity_id: targetEntity,
-          media_content_type: item.media_content_type,
-          media_content_id: item.media_content_id,
-        });
+        browse.stack.push(await this._fetchBrowseNode(targetEntity, item));
         browse.loading = false;
-        browse.stack.push({ title: result.title || item.title || '', items: result.children || [] });
       } catch (err) {
         browse.loading = false;
         browse.error = err;
