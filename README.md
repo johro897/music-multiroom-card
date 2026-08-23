@@ -127,6 +127,18 @@ favorites:
 
 ## Changelog
 
+### 0.5.3
+
+- Fix: grouping was capped at 2 rooms and could throw a HEOS `System
+  error -9` — HEOS's `media_player.join` replaces group membership on
+  every call rather than expanding it (a known, closed-as-"not planned"
+  Home Assistant core issue,
+  [#79298](https://github.com/home-assistant/core/issues/79298)). The
+  card now always sends the full desired room list on every join, not
+  just the newly added room.
+- Fix: the "New Group" chip never showed as active/selected while in
+  new-group mode.
+
 ### 0.5.2
 
 - Fix: the radio picker's "Add selected" button only appeared after the

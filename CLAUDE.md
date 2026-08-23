@@ -59,11 +59,17 @@ Utvecklarverktyg → Tillstånd/Åtgärder) så snart som möjligt, eftersom
    symmetriskt (kortet antar det, utan någon explicit "is_leader"-flagga —
    "leader" väljs deterministiskt som det först konfigurerade rummet bland
    medlemmarna).
-2. **`media_player.join`s semantik.** Kortet skickar
-   `{group_members: [nytt_rum]}` mot den fokuserade gruppens ledare och
-   antar att detta LÄGGER TILL rummet i den befintliga gruppen (additivt).
-   Om det istället ERSÄTTER hela medlemslistan måste anropet byggas om till
-   att skicka hela den önskade medlemslistan varje gång.
+2. ~~**`media_player.join`s semantik.**~~ **BEKRÄFTAT (2026-08-23), live i
+   produktion:** `join` ERSÄTTER gruppens medlemslista på varje anrop,
+   lägger INTE till additivt — matchar en känd, stängd
+   ("not planned") HA-core-bugg,
+   [home-assistant/core#79298](https://github.com/home-assistant/core/issues/79298).
+   Symptom som rapporterades: grupper gick aldrig förbi 2 medlemmar, och
+   `System error -9 (12)` från HEOS vid vissa join-försök. Fixat i
+   `_onRoomTap()`: skickar nu alltid HELA den önskade medlemslistan
+   (befintliga medlemmar + det nya rummet), inte bara tillägget. Detta är
+   INTE en kortbugg som kan fixas mer än så här — det är hur HEOS/HA-core
+   faktiskt beter sig, och kommer inte ändras uppströms.
 3. **`media_player.play_media`s payload för HEOS-favoriter.** Kortet
    skickar `media_content_type`/`media_content_id` rakt av från vad som är
    sparat i configen (för Spotify manuellt inskrivet, för radio hämtat via
@@ -83,6 +89,15 @@ Utvecklarverktyg → Tillstånd/Åtgärder) så snart som möjligt, eftersom
    eller nästlat ett steg in — bläddraren är byggd som en generisk
    breadcrumb-navigator just för att hantera båda fallen, men den bör
    provköras mot en riktig HEOS-installation innan den litas på.
+
+**Öppet efter 0.5.3, väntar på återtest:** ägaren rapporterade även (1) att
+ett par högtalare som redan var grupperade via HEOS-appen inte gick att
+"dela"/avgruppera från kortet, och (2) att uppspelning på en enda (icke-
+grupperad) högtalare inte visade sig som en "grupp om 1" i Active
+Groups-raden. Båda kan mycket väl ha varit sekundära symptom av
+join-buggen ovan (som gjorde att gruppstatus blev inkonsekvent under
+testet) snarare än egna buggar — inte bekräftat än, återtesta specifikt
+dessa två efter `0.5.3`.
 
 Enligt paraply-CLAUDE.mds release-rutin är det första `beta-0.1.0`-taggen
 som är den faktiska verifieringsvägen för allt ovan — inte något som görs

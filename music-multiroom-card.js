@@ -410,9 +410,20 @@
 
       if (focusedLeader) {
         if (this._guardPending(focusedLeader)) return;
-        // [UNVERIFIED] assumes join is additive to the target's existing
-        // group rather than replacing its membership outright.
-        this._hass.callService('media_player', 'join', { group_members: [entity] }, { entity_id: focusedLeader });
+        // HEOS's media_player.join REPLACES group membership on every call
+        // instead of expanding it (confirmed live 2026-08-23, matches
+        // home-assistant/core#79298, closed upstream as "not planned") — so
+        // the full desired membership must be sent every time, never just
+        // the newly added room, or every join drops whoever was already
+        // grouped.
+        const focusedGroup = groups.find((g) => g.leaderEntity === focusedLeader);
+        const desiredMembers = focusedGroup ? [...focusedGroup.memberEntities, entity] : [focusedLeader, entity];
+        this._hass.callService(
+          'media_player',
+          'join',
+          { group_members: Array.from(new Set(desiredMembers)) },
+          { entity_id: focusedLeader }
+        );
         return;
       }
 
@@ -503,10 +514,11 @@
             </div>`;
         })
         .join('');
+      const newGroupActive = !focusedLeader;
       return `
         <div class="groups-strip">
           ${chips}
-          <div class="chip chip-new" data-action="new-group">
+          <div class="chip chip-new ${newGroupActive ? 'chip-new-active' : ''}" data-action="new-group">
             ${iconPlus()}
             <span class="chip-label">${escHtml(t(hass, 'new_group'))}</span>
           </div>
@@ -713,6 +725,7 @@
         .chip:hover { filter: brightness(1.12); }
         .chip-dot { width:9px; height:9px; border-radius:50%; flex-shrink:0; }
         .chip-new { color: var(--mmc-text-secondary); border-style:dashed; }
+        .chip-new-active { color: var(--mmc-accent); border-color: var(--mmc-accent); border-style:solid; background: color-mix(in srgb, var(--mmc-accent) 14%, transparent); }
         .chip .eq { color: var(--mmc-warn); }
 
         .hero {
