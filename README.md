@@ -127,6 +127,14 @@ favorites:
 
 ## Changelog
 
+### 0.5.2
+
+- Fix: the radio picker's "Add selected" button only appeared after the
+  (possibly long) browse list, making it easy to miss below the fold —
+  not a functional bug, but reported as "doesn't seem to save" since it
+  looked like nothing happened. Moved to a toolbar always visible at the
+  top of the browse panel.
+
 ### 0.5.1
 
 - Fix: the config editor dropped the card's `type` field from its internal
