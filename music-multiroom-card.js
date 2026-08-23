@@ -151,6 +151,13 @@
     return GROUP_COLORS[(idx < 0 ? 0 : idx) % GROUP_COLORS.length];
   }
 
+  function sameStringSet(a, b) {
+    const aa = Array.isArray(a) ? [...a].sort() : [];
+    const bb = Array.isArray(b) ? [...b].sort() : [];
+    if (aa.length !== bb.length) return false;
+    return aa.every((v, i) => v === bb[i]);
+  }
+
   function hexA(hex, alpha) {
     const h = String(hex).replace('#', '');
     const r = parseInt(h.substring(0, 2), 16);
@@ -258,10 +265,31 @@
       return (this._config?.rooms || []).map((r) => r.entity).filter(Boolean);
     }
 
+    // Compares only the fields this card actually renders, not full state
+    // object identity — HEOS (like many media_player integrations) bumps
+    // the state object on attribute changes we don't display at all (e.g.
+    // media_position ticking during playback), which would otherwise force
+    // a full DOM rebuild every few seconds on a screen meant to stay on
+    // permanently.
     _isDirty(prevHass, hass) {
       if (!prevHass) return true;
       for (const id of this._watchedEntities()) {
-        if (prevHass.states?.[id] !== hass.states?.[id]) return true;
+        const prevSt = prevHass.states?.[id];
+        const newSt = hass.states?.[id];
+        if (prevSt === newSt) continue;
+        if (!prevSt || !newSt) return true;
+        if (prevSt.state !== newSt.state) return true;
+        const pa = prevSt.attributes || {};
+        const na = newSt.attributes || {};
+        if (
+          pa.media_title !== na.media_title ||
+          pa.media_artist !== na.media_artist ||
+          pa.entity_picture !== na.entity_picture ||
+          pa.volume_level !== na.volume_level ||
+          !sameStringSet(pa.group_members, na.group_members)
+        ) {
+          return true;
+        }
       }
       return false;
     }

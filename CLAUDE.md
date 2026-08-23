@@ -90,14 +90,15 @@ Utvecklarverktyg → Tillstånd/Åtgärder) så snart som möjligt, eftersom
    breadcrumb-navigator just för att hantera båda fallen, men den bör
    provköras mot en riktig HEOS-installation innan den litas på.
 
-**Öppet efter 0.5.3, väntar på återtest:** ägaren rapporterade även (1) att
-ett par högtalare som redan var grupperade via HEOS-appen inte gick att
-"dela"/avgruppera från kortet, och (2) att uppspelning på en enda (icke-
-grupperad) högtalare inte visade sig som en "grupp om 1" i Active
-Groups-raden. Båda kan mycket väl ha varit sekundära symptom av
-join-buggen ovan (som gjorde att gruppstatus blev inkonsekvent under
-testet) snarare än egna buggar — inte bekräftat än, återtesta specifikt
-dessa två efter `0.5.3`.
+**Status efter 0.5.3 (bekräftat av ägaren 2026-08-23):** avgruppering av
+högtalare som ursprungligen grupperades via HEOS-appen fungerar nu, och
+2-enheters-taket/`System error -9` är borta — båda var alltså sekundära
+symptom av join-buggen, inte egna buggar. **Fortfarande öppet:** en enda
+(icke-grupperad) högtalare som spelar solo visas inte som en "grupp om 1"
+i Active Groups-raden. Felsökning påbörjad men inte klar — nästa steg är
+att bekräfta om rums-plattan i "Rooms"-griden själv visar "Playing" för
+en sådan högtalare (skiljer på om `state === 'playing'`-detekteringen
+eller bara chip-renderingen är trasig); väntar på svar från ägaren.
 
 Enligt paraply-CLAUDE.mds release-rutin är det första `beta-0.1.0`-taggen
 som är den faktiska verifieringsvägen för allt ovan — inte något som görs
@@ -128,3 +129,14 @@ representativt nog för en riktig release.
   expand-knappar, favoritchips) — fångades upprepade gånger som en bugg
   under mockup-granskningen innan koden skrevs, se till att nya
   interaktiva element följer samma regel.
+- `_isDirty()` jämför INTE hela state-objekt-identitet längre (sedan
+  `0.5.4`) — bara de attribut kortet faktiskt renderar (`state`,
+  `media_title`/`media_artist`/`entity_picture`/`volume_level`,
+  `group_members` som orderoberoende mängd). Lägg till nya bevakade
+  attribut här OM `_render()` börjar läsa fler `hass.states[...]`-fält,
+  annars missas uppdateringar tyst — samma gotcha-mönster som
+  `tplink-switch-card`s `_statesChanged()`.
+- Säkerhetsgranskning (2026-08-23): alla ställen där användar-/HEOS-text
+  hamnar i `innerHTML` går genom `escHtml()` — kontrollerat rad för rad,
+  inga luckor hittade. Ingen `eval`, inga externa nätverksanrop, ingen
+  localStorage/cookies. Håll detta mönster vid framtida ändringar.

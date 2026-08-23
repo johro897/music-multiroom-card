@@ -125,7 +125,32 @@ favorites:
   paraplymapp-level `CLAUDE.md` for the full pattern; it isn't specific to
   this card.
 
+## Known limitations
+
+- **A single room playing solo doesn't yet appear as a "group of 1"** in
+  the Active Groups strip — under investigation.
+- The group volume slider's `heos.group_volume_set` call hasn't been
+  confirmed against every HA version — if it errors, per-room volume
+  sliders still work as a fallback.
+- No seek/progress bar, shuffle, or repeat controls yet — playback
+  transport is limited to previous/play-pause/next.
+
 ## Changelog
+
+### 0.5.4
+
+- Perf: the check that decides whether to re-render compared whole state
+  object identity, which meant any attribute change on a watched room —
+  including ones the card never displays, like `media_position` ticking
+  during playback — forced a full DOM rebuild. Now compares only the
+  fields the card actually renders, so a tablet left showing this
+  dashboard continuously doesn't redraw needlessly every few seconds.
+- Security review: audited every place user- or HEOS-provided text
+  reaches `innerHTML` (room/favorite names, icons, media title/artist,
+  HEOS browse titles, `entity_picture` URLs) — all confirmed escaped, no
+  gaps found.
+- Confirmed by the owner: the group-splitting and 2-device grouping cap
+  from 0.5.2 are resolved by 0.5.3's join fix.
 
 ### 0.5.3
 
