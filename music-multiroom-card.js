@@ -952,15 +952,13 @@
           .join('');
         browsePanel = `
           <div class="browse-panel">
-            ${browse.stack.length > 1 ? `<button class="link-btn" data-action="browse-back">&larr; ${escHtml(t(hass, 'editor_browse_back'))}</button>` : ''}
+            <div class="browse-toolbar">
+              ${browse.stack.length > 1 ? `<button class="link-btn" data-action="browse-back">&larr; ${escHtml(t(hass, 'editor_browse_back'))}</button>` : '<span></span>'}
+              <button class="add-btn" data-action="add-selected" ${this._selectedBrowseIds.size ? '' : 'disabled'}>${escHtml(
+        t(hass, 'editor_add_selected', { count: this._selectedBrowseIds.size })
+      )}</button>
+            </div>
             <div class="browse-list">${rows || `<div class="hint">${escHtml(t(hass, 'editor_browse_empty'))}</div>`}</div>
-            ${
-              this._selectedBrowseIds.size
-                ? `<button class="add-btn" data-action="add-selected">${escHtml(
-                    t(hass, 'editor_add_selected', { count: this._selectedBrowseIds.size })
-                  )}</button>`
-                : ''
-            }
           </div>`;
       }
 
@@ -1181,12 +1179,15 @@
         .field-text { flex:1 1 0; min-width:0; height:44px; padding:0 10px; border-radius:6px; border:1px solid var(--divider-color, #444); background: var(--card-background-color, transparent); color: var(--primary-text-color); font-size:14px; }
         .icon-btn { width:40px; height:40px; min-width:40px; border-radius:8px; border:none; background: rgba(128,128,128,.15); color: var(--primary-text-color); cursor:pointer; display:flex; align-items:center; justify-content:center; }
         .add-btn { height:44px; padding:0 16px; border-radius:8px; border:1px dashed var(--divider-color,#666); background:transparent; color: var(--primary-color); cursor:pointer; font-size:13px; font-weight:600; align-self:flex-start; }
+        .add-btn:disabled { opacity:0.4; cursor:not-allowed; }
         .hint { font-size:13px; color: var(--secondary-text-color); padding:8px 0; }
         .hint-error { color: var(--error-color, #db4437); }
         .browse-controls { display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
         .browse-room-label { font-size:13px; color: var(--secondary-text-color); display:flex; align-items:center; gap:8px; }
         .browse-room-select { height:40px; border-radius:6px; border:1px solid var(--divider-color,#444); background: var(--card-background-color, transparent); color: var(--primary-text-color); }
         .browse-panel { border:1px solid var(--divider-color,#444); border-radius:8px; padding:10px; margin-bottom:12px; }
+        .browse-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+        .browse-toolbar .add-btn { height:36px; }
         .browse-list { max-height:260px; overflow-y:auto; display:flex; flex-direction:column; gap:4px; }
         .browse-row { display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:pointer; min-height:40px; }
         .browse-row:hover { background: rgba(128,128,128,.12); }
