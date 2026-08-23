@@ -27,12 +27,14 @@ or any other platform.
 - **Group volume + per-room fine adjustment.** One slider for the whole
   group, with an expandable per-room slider that preserves relative balance
   rather than forcing every speaker to the same level.
-- **Spotify + Radio favorites shelf.** Spotify playlists are configured by
-  hand (name + Spotify URI, saved as a HEOS favorite); radio stations are
-  picked visually in the card editor by browsing what's already in your
-  HEOS Favorites/TuneIn — no station IDs to hunt down.
-- **Built-in GUI editor**, including the radio browse-and-pick flow — no
-  YAML required to configure the card.
+- **Spotify + Radio favorites shelf.** Both are picked visually in the
+  card editor by browsing HEOS's own music sources — including your real
+  Spotify playlists (browse into "Spotify") and radio stations (browse
+  into "TuneIn"/"Favorites") — no IDs or names to type in by hand. HEOS
+  only exposes what's already starred as a Favorite there, so star it in
+  the HEOS app first if it isn't showing up.
+- **Built-in GUI editor**, including the browse-and-pick flow — no YAML
+  required to configure the card.
 - English/Swedish UI, theme-aware colors (dark and light Home Assistant
   themes both work — only the group-identity color coding is a fixed
   palette, since it needs to visually distinguish arbitrary simultaneous
@@ -60,7 +62,11 @@ For a dedicated tablet dashboard, put this card alone on a view set to
 
 The card has no visible options other than what you configure through its
 GUI editor: your rooms (which `media_player` entities are groupable) and
-your Spotify/Radio favorites. The equivalent YAML shape:
+your Spotify/Radio favorites, both populated by browsing rather than
+typed by hand. The equivalent YAML shape (for reference — you won't
+normally write `favorites` entries yourself, since `media_content_id`
+values are opaque HEOS-internal identifiers the browse picker captures
+for you, not something you'd type):
 
 ```yaml
 type: custom:music-multiroom-card
@@ -72,16 +78,8 @@ rooms:
     name: Kitchen
     icon: mdi:fridge
 favorites:
-  spotify:
-    - name: Chill Mix
-      icon: mdi:spotify
-      media_content_type: playlist
-      media_content_id: "Chill Mix"
-  radio:
-    - name: Sveriges Radio P3
-      icon: mdi:radio
-      media_content_type: favorite
-      media_content_id: 3
+  spotify: []   # populate via the editor's "Browse HEOS" picker
+  radio: []     # same picker, just choose "Radio" when adding
 ```
 
 ### Options
@@ -89,8 +87,7 @@ favorites:
 | Option | Type | Required | Description |
 |---|---|---|---|
 | `rooms` | list | yes | Media player entities that can be grouped. Each entry: `entity`, optional `name` (defaults to the entity id), optional `icon` (defaults to `mdi:speaker`). |
-| `favorites.spotify` | list | no | Spotify playlists saved as HEOS favorites. Each entry: `name`, optional `icon`, `media_content_id` (the HEOS favorite's name/URI). Add these by hand in the editor — there's no reliable way to browse "just Spotify" out of HEOS's mixed favorites list. |
-| `favorites.radio` | list | no | Radio stations. **Populated by the card editor's browse picker**, not typed in by hand — open the editor, pick a room to browse from, click "Browse HEOS favorites", tick the stations you want. |
+| `favorites.spotify` / `favorites.radio` | list | no | Playable favorites, split into two tabs at runtime. **Both populated by the same browse picker** in the card editor — open the editor, pick a room to browse from, click "Browse HEOS", drill into a source (e.g. "Spotify" for your own playlists, "TuneIn" or "Favorites" for radio), tick what you want, choose which tab it should land in, then "Add selected". Only things already starred as a Favorite in the HEOS app show up — there's no search. |
 
 > **Note on favorites:** runtime playback always replays the saved
 > `media_content_type`/`media_content_id` for a favorite — the card never
@@ -115,10 +112,17 @@ favorites:
 - **A room won't join a group.** Confirm the entity is actually a HEOS
   `media_player` and is online (state isn't `unavailable`/`unknown` —
   those rooms show `—` instead of a status in the grid).
-- **Radio favorites list is empty when browsing.** Make sure the room
-  you're browsing from is online, and that you actually have items
-  starred as HEOS Favorites in the HEOS app first — the browser only shows
-  what HEOS itself already knows about.
+- **Browse list is empty, or a source you expect (like "Spotify") is
+  missing.** Make sure the room you're browsing from is online, and that
+  the relevant service is actually linked in the HEOS app — the browser
+  only shows what HEOS itself already knows about, and can't discover a
+  Spotify/TuneIn/etc. account that isn't set up there.
+- **`Unable to play media: Invalid playlist '...'`** in the HA log. This
+  means a favorite's `media_content_id` doesn't match anything HEOS
+  recognizes — almost always a leftover from an older config where
+  Spotify favorites were typed in by hand (pre-0.6.3). Remove it and
+  re-add it through the editor's browse picker instead; typed-in values
+  were never reliable (see 0.6.3's changelog entry for why).
 - **Card looks broken after an update.** Check **Settings → Dashboards →
   Resources** for a duplicate registration of the card (an old manually
   added resource alongside a HACS-managed one) — see this project's
@@ -141,6 +145,41 @@ favorites:
   been exercised against real data at every level.
 
 ## Changelog
+
+### 0.6.3
+
+- **Removed manual Spotify favorite entry entirely** — it was built on a
+  wrong assumption from before any code existed. HEOS's `"playlist"`
+  media type looks names up against `heos.get_queue`... no,
+  `heos.get_playlists()` — HEOS's own separate **Playlists** library
+  (things explicitly saved there), which is *not* the same list as
+  **Favorites** (where a starred Spotify playlist actually lives, mixed
+  in with radio stations). No name typed by hand could reliably match,
+  which is why 0.6.2's fix (correcting the field's misleading label) was
+  still not enough — confirmed live by the owner hitting `Invalid
+  playlist` with an exact-looking name.
+- Spotify and Radio favorites are now both populated by the **same
+  browse-and-pick flow**: root-level `browse_media` already lists every
+  HEOS music source, including "Spotify" itself (your real linked
+  account's playlists, browsable directly) — the picker just needed to
+  let you browse there instead of assuming Spotify was a special
+  manual-entry case. A Spotify/Radio toggle next to "Add selected"
+  controls which tab a picked item lands in at runtime.
+- Verified with a scripted test: root browse → drill into a "Spotify"
+  source → pick a real playlist item → lands in `favorites.spotify` with
+  the correct opaque HEOS content ID, not a typed name; dedup checks
+  both tabs' arrays now, not just the one being added to.
+
+### 0.6.2
+
+- Fix: the Spotify favorite editor field was labeled "Media content ID
+  (Spotify URI)", which is wrong and misleading — HEOS looks up
+  `"playlist"`-type favorites by **exact name match** against its own
+  saved playlists, not a Spotify link. Pasting a `open.spotify.com` URL
+  (a very reasonable thing to try, given the old label) fails with
+  `Unable to play media: Invalid playlist '<url>'`. Relabeled to "HEOS
+  playlist name" with an explanatory hint in the editor, and fixed the
+  same wording in this README. Found live by the owner.
 
 ### 0.6.1
 

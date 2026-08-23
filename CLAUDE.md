@@ -95,6 +95,44 @@ HEOS-installation eftersom källkoden inte visar allt (t.ex. exakta
    (falsy i JS) till `'favorite'` vid varje omladdning, vilket skulle
    trasat uppspelning för bläddrade radiofavoriter. Fixat i `0.5.5` med
    `??` istället för `||`.
+
+   **BEKRÄFTAT LIVE (2026-08-23), riktigt användarfel hittat:** för
+   `"playlist"`-typen slår `async_play_media()` upp
+   `media_id` mot `(await coordinator.heos.get_playlists())`s
+   `.name`-fält — alltså ett EXAKT namn-match mot HEOS egna sparade
+   spellistor, INTE en Spotify-länk/URI. Ägaren fick
+   `Unable to play media: Invalid playlist 'https://open.spotify.com/
+   playlist/...'` efter att ha klistrat in en Spotify-delningslänk i
+   editorns fält — förståeligt, eftersom fältets label FELAKTIGT sa
+   "Media content ID (Spotify URI)" och antydde att en URI dög. Fixat i
+   `0.6.2`: label ändrad till "HEOS playlist name" + en förklarande
+   hint-text i editorn.
+
+   **`0.6.2`s fix var INTE tillräcklig — bekräftat live samma dag:**
+   ägaren provade sedan ett rimligt EXAKT namn ("God morgon", en riktig
+   Spotify-spellista) och fick samma `Invalid playlist`-fel. Roten:
+   `get_playlists()` läser HEOS EGEN separata "Playlists"-bibliotek
+   (saker uttryckligen sparade DIT i HEOS-appen) — INTE samma lista som
+   "Favorites" (där en stjärnmärkt Spotify-spellista faktiskt hamnar,
+   blandat med radiokanaler). Ingen som helst handskriven sträng kunde
+   någonsin matcha tillförlitligt, eftersom hela konceptet "ange
+   spellistans namn för hand" byggde på fel HEOS-bibliotek redan från den
+   allra första research-fasen (innan någon kod skrevs) — se
+   `favorites_spotify`-avsnittet i den ursprungliga design-sammanfattningen.
+
+   **RIKTIG FIX i `0.6.3`:** tog bort handskriven Spotify-inmatning helt.
+   Både Spotify- och radiofavoriter går nu genom SAMMA bläddrings-picker
+   — rot-nivå-`browse_media` (som redan användes för radio) listar redan
+   ALLA HEOS-musikkällor platt, inklusive "Spotify" som en egen
+   bläddringsbar källa (ägarens riktiga länkade Spotify-konto, bläddras
+   in i precis som "TuneIn"/"Favorites"). Picker-UI:t fick bara en
+   Spotify/Radio-växlare bredvid "Add selected" som styr vilken
+   `favorites.*`-array det valda hamnar i — ingen ny bläddrings-mekanik
+   behövdes, bara att sluta anta att Spotify var ett specialfall som
+   krävde handskriven inmatning. Verifierat med ett skriptat test:
+   rot-bläddring → borra in i en "Spotify"-källa → välj en riktig
+   spellista → hamnar korrekt i `favorites.spotify` med det opaka
+   HEOS-content-ID:t (inte ett handskrivet namn).
 4. ~~**`heos.group_volume_set`.**~~ **BEKRÄFTAT via källkod
    (2026-08-23):** exakt schema är `volume_level` (0–1) som data-fält,
    entitet som TARGET — inte `level`+`entity_id` båda i data-payloaden

@@ -59,21 +59,18 @@
       editor_room_name: 'Display name',
       editor_room_icon: 'Icon',
       editor_remove: 'Remove',
-      editor_spotify_favorites: 'Spotify favorites',
-      editor_add_spotify_favorite: 'Add Spotify favorite',
-      editor_favorite_name: 'Name',
-      editor_favorite_icon: 'Icon',
-      editor_favorite_content_id: 'Media content ID (Spotify URI)',
-      editor_radio_favorites: 'Radio favorites',
+      editor_favorites: 'Favorites',
+      editor_favorites_hint: 'Only things already starred as a Favorite in the HEOS app can be added here — including your own Spotify playlists (browse into "Spotify") and radio stations (browse into "TuneIn" or "Favorites"). No searching or typing names.',
       editor_browse_from_room: 'Browse from room',
-      editor_browse_button: 'Browse HEOS favorites',
-      editor_browse_loading: 'Loading favorites…',
-      editor_browse_error: 'Could not load favorites from this room. Is it online?',
-      editor_browse_empty: 'No browsable favorites found here.',
+      editor_browse_button: 'Browse HEOS',
+      editor_browse_loading: 'Loading…',
+      editor_browse_error: 'Could not load from this room. Is it online?',
+      editor_browse_empty: 'Nothing found here.',
       editor_browse_back: 'Back',
+      editor_add_to: 'Add to',
       editor_add_selected: 'Add selected ({count})',
       editor_already_added: 'Already added',
-      editor_no_rooms_configured: 'Add at least one room before browsing favorites.',
+      editor_no_rooms_configured: 'Add at least one room before browsing.',
     },
     sv: {
       now_playing: 'Nu spelas',
@@ -115,21 +112,18 @@
       editor_room_name: 'Visningsnamn',
       editor_room_icon: 'Ikon',
       editor_remove: 'Ta bort',
-      editor_spotify_favorites: 'Spotify-favoriter',
-      editor_add_spotify_favorite: 'Lägg till Spotify-favorit',
-      editor_favorite_name: 'Namn',
-      editor_favorite_icon: 'Ikon',
-      editor_favorite_content_id: 'Media content ID (Spotify-URI)',
-      editor_radio_favorites: 'Radiofavoriter',
+      editor_favorites: 'Favoriter',
+      editor_favorites_hint: 'Bara sådant som redan är stjärnmärkt som Favorit i HEOS-appen går att lägga till här — inklusive dina egna Spotify-spellistor (bläddra in i "Spotify") och radiokanaler (bläddra in i "TuneIn" eller "Favorites"). Ingen sökning eller manuell inmatning.',
       editor_browse_from_room: 'Bläddra från rum',
-      editor_browse_button: 'Bläddra HEOS-favoriter',
-      editor_browse_loading: 'Laddar favoriter…',
-      editor_browse_error: 'Kunde inte hämta favoriter från det här rummet. Är det online?',
-      editor_browse_empty: 'Inga bläddringsbara favoriter hittades här.',
+      editor_browse_button: 'Bläddra HEOS',
+      editor_browse_loading: 'Laddar…',
+      editor_browse_error: 'Kunde inte hämta från det här rummet. Är det online?',
+      editor_browse_empty: 'Inget hittades här.',
       editor_browse_back: 'Tillbaka',
+      editor_add_to: 'Lägg till i',
       editor_add_selected: 'Lägg till markerade ({count})',
       editor_already_added: 'Redan tillagd',
-      editor_no_rooms_configured: 'Lägg till minst ett rum innan du bläddrar favoriter.',
+      editor_no_rooms_configured: 'Lägg till minst ett rum innan du bläddrar.',
     },
   };
 
@@ -1074,7 +1068,7 @@
       super();
       this._hass = null;
       this._config = { rooms: [], favorites: { spotify: [], radio: [] } };
-      this._radioBrowse = { room: null, stack: [], loading: false, error: null };
+      this._radioBrowse = { room: null, stack: [], loading: false, error: null, addCategory: 'spotify' };
       this._selectedBrowseIds = new Set();
     }
 
@@ -1092,10 +1086,14 @@
           icon: r.icon || 'mdi:speaker',
         })),
         favorites: {
+          // Spotify favorites are now sourced from the same browse picker
+          // as radio (both come from HEOS's Favorites/music-source tree),
+          // so both need the same `??` (not `||`) empty-string-preserving
+          // normalization — see the radio comment below for why.
           spotify: (config?.favorites?.spotify || []).map((f) => ({
             name: f.name || '',
             icon: f.icon || 'mdi:spotify',
-            media_content_type: 'playlist',
+            media_content_type: f.media_content_type ?? '',
             media_content_id: f.media_content_id || '',
           })),
           radio: (config?.favorites?.radio || []).map((f) => ({
@@ -1140,13 +1138,9 @@
             <button class="add-btn" data-action="add-room">+ ${escHtml(t(hass, 'editor_add_room'))}</button>
           </div>
           <div class="section">
-            <div class="section-title">${escHtml(t(hass, 'editor_spotify_favorites'))}</div>
-            ${this._renderSpotifyRows()}
-            <button class="add-btn" data-action="add-spotify">+ ${escHtml(t(hass, 'editor_add_spotify_favorite'))}</button>
-          </div>
-          <div class="section">
-            <div class="section-title">${escHtml(t(hass, 'editor_radio_favorites'))}</div>
-            ${this._renderRadioSection()}
+            <div class="section-title">${escHtml(t(hass, 'editor_favorites'))}</div>
+            <div class="hint">${escHtml(t(hass, 'editor_favorites_hint'))}</div>
+            ${this._renderFavoritesSection()}
           </div>
         </div>`;
       this._bindPickers();
@@ -1169,26 +1163,7 @@
         .join('');
     }
 
-    _renderSpotifyRows() {
-      const hass = this._hass;
-      return this._config.favorites.spotify
-        .map(
-          (fav, idx) => `
-        <div class="row">
-          <input class="field-text" type="text" data-idx="${idx}" data-field="name" data-target="spotify" placeholder="${escHtml(
-            t(hass, 'editor_favorite_name')
-          )}" value="${escHtml(fav.name)}" />
-          <ha-icon-picker class="field-icon field-icon-narrow" data-idx="${idx}" data-field="icon" data-target="spotify"></ha-icon-picker>
-          <input class="field-text" type="text" data-idx="${idx}" data-field="media_content_id" data-target="spotify" placeholder="${escHtml(
-            t(hass, 'editor_favorite_content_id')
-          )}" value="${escHtml(fav.media_content_id)}" />
-          <button class="icon-btn" data-action="remove-spotify" data-idx="${idx}" title="${escHtml(t(hass, 'editor_remove'))}" aria-label="${escHtml(t(hass, 'editor_remove'))}">${iconTrash()}</button>
-        </div>`
-        )
-        .join('');
-    }
-
-    _renderRadioSection() {
+    _renderFavoritesSection() {
       const hass = this._hass;
       const rooms = this._config.rooms.filter((r) => r.entity);
       if (!rooms.length) {
@@ -1212,10 +1187,11 @@
       } else if (browse.stack.length) {
         const current = browse.stack[browse.stack.length - 1];
         const items = current.items || [];
+        const alreadyAdded = [...this._config.favorites.spotify, ...this._config.favorites.radio];
         const rows = items
           .map((item, i) => {
             const isBrowsable = !!item.can_expand;
-            const already = this._config.favorites.radio.some((f) => f.media_content_id === item.media_content_id);
+            const already = alreadyAdded.some((f) => f.media_content_id === item.media_content_id);
             const checked = this._selectedBrowseIds.has(item.media_content_id);
             return `
               <div class="browse-row" data-action="${isBrowsable ? 'browse-drill' : 'toggle-select'}" data-idx="${i}">
@@ -1229,10 +1205,17 @@
               </div>`;
           })
           .join('');
+        const spotifyActive = browse.addCategory === 'spotify';
         browsePanel = `
           <div class="browse-panel">
             <div class="browse-toolbar">
-              ${browse.stack.length > 1 ? `<button class="link-btn" data-action="browse-back">&larr; ${escHtml(t(hass, 'editor_browse_back'))}</button>` : '<span></span>'}
+              ${browse.stack.length > 1 ? `<button class="link-btn" data-action="browse-back">&larr; ${escHtml(t(hass, 'editor_browse_back'))}</button>` : ''}
+              <div class="category-toggle">
+                <span class="category-toggle-label">${escHtml(t(hass, 'editor_add_to'))}</span>
+                <button class="cat-btn ${spotifyActive ? 'cat-btn-active' : ''}" data-action="set-add-category" data-category="spotify">${escHtml(t(hass, 'spotify'))}</button>
+                <button class="cat-btn ${!spotifyActive ? 'cat-btn-active' : ''}" data-action="set-add-category" data-category="radio">${escHtml(t(hass, 'radio'))}</button>
+              </div>
+              <div class="toolbar-spacer"></div>
               <button class="add-btn" data-action="add-selected" ${this._selectedBrowseIds.size ? '' : 'disabled'}>${escHtml(
         t(hass, 'editor_add_selected', { count: this._selectedBrowseIds.size })
       )}</button>
@@ -1241,16 +1224,15 @@
           </div>`;
       }
 
-      const radioRows = this._config.favorites.radio
-        .map(
-          (fav, idx) => `
+      const favRow = (fav, idx, category) => `
         <div class="row row-readonly">
-          <div class="row-icon"><ha-icon icon="${escHtml(fav.icon || 'mdi:radio')}"></ha-icon></div>
+          <div class="row-icon"><ha-icon icon="${escHtml(fav.icon || (category === 'spotify' ? 'mdi:spotify' : 'mdi:radio'))}"></ha-icon></div>
           <div class="row-name">${escHtml(fav.name)}</div>
-          <button class="icon-btn" data-action="remove-radio" data-idx="${idx}" title="${escHtml(t(hass, 'editor_remove'))}" aria-label="${escHtml(t(hass, 'editor_remove'))}">${iconTrash()}</button>
-        </div>`
-        )
-        .join('');
+          <button class="icon-btn" data-action="remove-${category}" data-idx="${idx}" title="${escHtml(t(hass, 'editor_remove'))}" aria-label="${escHtml(t(hass, 'editor_remove'))}">${iconTrash()}</button>
+        </div>`;
+      const addedRows =
+        this._config.favorites.spotify.map((f, i) => favRow(f, i, 'spotify')).join('') +
+        this._config.favorites.radio.map((f, i) => favRow(f, i, 'radio')).join('');
 
       return `
         <div class="browse-controls">
@@ -1260,7 +1242,7 @@
           <button class="add-btn" data-action="start-browse">${escHtml(t(hass, 'editor_browse_button'))}</button>
         </div>
         ${browsePanel}
-        <div class="row-list">${radioRows}</div>`;
+        <div class="row-list">${addedRows}</div>`;
     }
 
     _bindPickers() {
@@ -1275,10 +1257,9 @@
       });
       this.shadowRoot.querySelectorAll('ha-icon-picker[data-field="icon"]').forEach((el) => {
         const idx = Number(el.dataset.idx);
-        const arr = el.dataset.target === 'spotify' ? this._config.favorites.spotify : this._config.rooms;
         el.hass = hass;
-        el.value = arr[idx]?.icon || '';
-        el.label = t(hass, arr === this._config.rooms ? 'editor_room_icon' : 'editor_favorite_icon');
+        el.value = this._config.rooms[idx]?.icon || '';
+        el.label = t(hass, 'editor_room_icon');
       });
     }
 
@@ -1293,8 +1274,7 @@
       } else if (el.matches && el.matches('ha-icon-picker[data-field="icon"]')) {
         e.stopPropagation();
         const idx = Number(el.dataset.idx);
-        const arr = el.dataset.target === 'spotify' ? this._config.favorites.spotify : this._config.rooms;
-        arr[idx].icon = e.detail.value || '';
+        this._config.rooms[idx].icon = e.detail.value || '';
         this._fireConfigChanged();
       }
     }
@@ -1305,7 +1285,6 @@
         const idx = Number(el.dataset.idx);
         const target = el.dataset.target;
         if (target === 'rooms') this._config.rooms[idx][el.dataset.field] = el.value;
-        else if (target === 'spotify') this._config.favorites.spotify[idx][el.dataset.field] = el.value;
         this._fireConfigChanged();
         return;
       }
@@ -1330,11 +1309,6 @@
           break;
         case 'remove-room':
           this._config.rooms.splice(idx, 1);
-          this._render();
-          this._fireConfigChanged();
-          break;
-        case 'add-spotify':
-          this._config.favorites.spotify.push({ name: '', icon: 'mdi:spotify', media_content_type: 'playlist', media_content_id: '' });
           this._render();
           this._fireConfigChanged();
           break;
@@ -1371,6 +1345,10 @@
         }
         case 'add-selected':
           this._addSelectedFavorites();
+          break;
+        case 'set-add-category':
+          this._radioBrowse.addCategory = el.dataset.category;
+          this._render();
           break;
         default:
           break;
@@ -1429,11 +1407,14 @@
       const current = this._radioBrowse.stack[this._radioBrowse.stack.length - 1];
       const items = current?.items || [];
       const toAdd = items.filter((it) => this._selectedBrowseIds.has(it.media_content_id) && !it.can_expand);
+      const category = this._radioBrowse.addCategory === 'radio' ? 'radio' : 'spotify';
+      const target = this._config.favorites[category];
+      const alreadyEverywhere = [...this._config.favorites.spotify, ...this._config.favorites.radio];
       for (const item of toAdd) {
-        if (this._config.favorites.radio.some((f) => f.media_content_id === item.media_content_id)) continue;
-        this._config.favorites.radio.push({
+        if (alreadyEverywhere.some((f) => f.media_content_id === item.media_content_id)) continue;
+        target.push({
           name: item.title || item.media_content_id,
-          icon: 'mdi:radio',
+          icon: category === 'spotify' ? 'mdi:spotify' : 'mdi:radio',
           media_content_type: item.media_content_type,
           media_content_id: item.media_content_id,
         });
@@ -1465,8 +1446,13 @@
         .browse-room-label { font-size:13px; color: var(--secondary-text-color); display:flex; align-items:center; gap:8px; }
         .browse-room-select { height:40px; border-radius:6px; border:1px solid var(--divider-color,#444); background: var(--card-background-color, transparent); color: var(--primary-text-color); }
         .browse-panel { border:1px solid var(--divider-color,#444); border-radius:8px; padding:10px; margin-bottom:12px; }
-        .browse-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+        .browse-toolbar { display:flex; align-items:center; gap:10px; margin-bottom:8px; flex-wrap:wrap; }
         .browse-toolbar .add-btn { height:36px; }
+        .toolbar-spacer { flex-grow:1; }
+        .category-toggle { display:flex; align-items:center; gap:6px; }
+        .category-toggle-label { font-size:12px; color: var(--secondary-text-color); }
+        .cat-btn { height:32px; padding:0 12px; border-radius:16px; border:1px solid var(--divider-color,#444); background:transparent; color: var(--secondary-text-color); cursor:pointer; font-size:12px; font-weight:600; }
+        .cat-btn-active { background: var(--primary-color, #03a9f4); border-color: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
         .browse-list { max-height:260px; overflow-y:auto; display:flex; flex-direction:column; gap:4px; }
         .browse-row { display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:pointer; min-height:40px; }
         .browse-row:hover { background: rgba(128,128,128,.12); }
