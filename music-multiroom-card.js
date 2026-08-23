@@ -428,11 +428,26 @@
 
       if (owning) {
         if (this._guardPending(entity)) return;
-        this._hass.callService('media_player', 'unjoin', {}, { entity_id: entity });
-        if (owning.memberEntities.length <= 2) {
+        const remaining = owning.memberEntities.filter((id) => id !== entity);
+        if (remaining.length >= 2) {
+          // A plain `unjoin` on the departing room is leader-dependent in
+          // HEOS: unjoining the group's real internal leader DISSOLVES the
+          // whole group instead of just detaching that one room (confirmed
+          // via home-assistant/core's heos/media_player.py source,
+          // 2026-08-23) — and there's no way to tell from here whether the
+          // departing room happens to be that real leader. Rebuilding the
+          // group explicitly under one of the remaining rooms via `join`
+          // is deterministic and safe regardless of who HEOS considers the
+          // leader.
+          const newLeader = this._config.rooms.find((r) => remaining.includes(r.entity))?.entity || remaining[0];
+          const others = remaining.filter((id) => id !== newLeader);
+          this._hass.callService('media_player', 'join', { group_members: others }, { entity_id: newLeader });
+          this._focusedGroupId = newLeader;
+        } else {
+          this._hass.callService('media_player', 'unjoin', {}, { entity_id: entity });
           this._focusedGroupId = null;
-          this._render();
         }
+        this._render();
         return;
       }
 
@@ -488,10 +503,10 @@
       const groups = this._computeGroups();
       const focusedLeader = this._resolveFocusedLeader(groups);
       if (!focusedLeader || !this._hass) return;
-      // [UNVERIFIED] heos.group_volume_set's exact schema, and whether it is
-      // still the right service on the user's HA version, needs live
-      // confirmation. See CLAUDE.md.
-      this._hass.callService('heos', 'group_volume_set', { entity_id: focusedLeader, level: sliderValue / 100 });
+      // Schema confirmed from home-assistant/core's heos/services.yaml
+      // (2026-08-23): `volume_level` (0-1) as data, entity as target — not
+      // `level` in the data payload as originally guessed.
+      this._hass.callService('heos', 'group_volume_set', { volume_level: sliderValue / 100 }, { entity_id: focusedLeader });
     }
 
     // ---- render -------------------------------------------------------
@@ -868,7 +883,12 @@
           radio: (config?.favorites?.radio || []).map((f) => ({
             name: f.name || '',
             icon: f.icon || 'mdi:radio',
-            media_content_type: f.media_content_type || 'favorite',
+            // `??` not `||`: HEOS's browse_media returns "" (empty string,
+            // falsy) as media_content_type for every browsable item
+            // (confirmed from home-assistant/core source, 2026-08-23) —
+            // `||` would silently corrupt that into 'favorite' on every
+            // reload, breaking playback for picked radio stations.
+            media_content_type: f.media_content_type ?? 'favorite',
             media_content_id: f.media_content_id || '',
           })),
         },

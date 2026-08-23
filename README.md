@@ -129,13 +129,35 @@ favorites:
 
 - **A single room playing solo doesn't yet appear as a "group of 1"** in
   the Active Groups strip — under investigation.
-- The group volume slider's `heos.group_volume_set` call hasn't been
-  confirmed against every HA version — if it errors, per-room volume
-  sliders still work as a fallback.
-- No seek/progress bar, shuffle, or repeat controls yet — playback
-  transport is limited to previous/play-pause/next.
+- No seek/progress bar, shuffle, repeat, or mute controls yet — HEOS
+  itself doesn't support seeking at all; the others are tracked as
+  [#1](https://github.com/johro897/music-multiroom-card/issues/1)/[#2](https://github.com/johro897/music-multiroom-card/issues/2).
+- `browse_media`'s exact tree depth for HEOS Favorites/TuneIn (how many
+  levels down a playable station sits) isn't confirmed against a live
+  system yet — the picker handles arbitrary depth generically, but hasn't
+  been exercised against real data at every level.
 
 ## Changelog
+
+### 0.5.5
+
+- Fix: `heos.group_volume_set` was called with the wrong shape
+  (`level`/`entity_id` both in the service data) — confirmed from HA
+  core's actual source that it takes `volume_level` as data with the
+  entity as the service target.
+- Fix: removing a room from a group used a plain `unjoin`, which HEOS
+  dissolves the *entire* group for if the departing room happens to be
+  HEOS's own internal group leader (confirmed from source) — the card
+  has no way to know that from the outside. Now rebuilds the group
+  explicitly under one of the remaining rooms instead, which is safe
+  regardless of who HEOS considers the leader.
+- Fix: HEOS's `browse_media` returns `media_content_type: ""` (empty
+  string) for every browsable item, confirmed from source — the editor's
+  config normalization used `||`, which treated that as missing and
+  silently corrupted it to `'favorite'` on every reload, breaking
+  playback for radio favorites added via the picker. Changed to `??`.
+- All three verified with source-derived test cases, not just guessed —
+  see CLAUDE.md for the full source-reading log.
 
 ### 0.5.4
 

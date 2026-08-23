@@ -45,50 +45,78 @@ antagandena ovan — de är fortfarande helt otestade.
 
 ## Kräver manuell verifiering i riktig HA-instans
 
-Detta är INTE gjort än — kortet är byggt på rimliga men obekräftade
-antaganden om hur HEOS-integrationen exponerar grupptillstånd och tjänster.
-Följande måste bekräftas mot en riktig HEOS-installation (se
-Utvecklarverktyg → Tillstånd/Åtgärder) så snart som möjligt, eftersom
-`0.5.0` redan är i användarens hand utan att detta är gjort:
+`0.5.5` (2026-08-23) läste igenom HA cores faktiska
+`homeassistant/components/heos/media_player.py` och `services.yaml`
+källkod (inte bara dokumentation) — flera punkter nedan är därför nu
+BEKRÄFTADE mot källkod snarare än gissade, se detaljerad logg i den
+sessionens konversation. Kvarvarande punkter kräver fortfarande en riktig
+HEOS-installation eftersom källkoden inte visar allt (t.ex. exakta
+`browse_media`-svar från en riktig TuneIn/Favorites-källa).
 
-1. **`group_members`-attributet.** `_computeGroups()` i
-   `music-multiroom-card.js` läser `hass.states[entity].attributes.group_members`
-   för att avgöra vilka rum som faktiskt är grupperade. Kontrollera att
-   HEOS-plattformen verkligen sätter detta attribut (både på en solo-spelare
-   och på gruppmedlemmar), och att alla medlemmar listar samma grupp
-   symmetriskt (kortet antar det, utan någon explicit "is_leader"-flagga —
-   "leader" väljs deterministiskt som det först konfigurerade rummet bland
-   medlemmarna).
-2. ~~**`media_player.join`s semantik.**~~ **BEKRÄFTAT (2026-08-23), live i
-   produktion:** `join` ERSÄTTER gruppens medlemslista på varje anrop,
-   lägger INTE till additivt — matchar en känd, stängd
-   ("not planned") HA-core-bugg,
-   [home-assistant/core#79298](https://github.com/home-assistant/core/issues/79298).
-   Symptom som rapporterades: grupper gick aldrig förbi 2 medlemmar, och
-   `System error -9 (12)` från HEOS vid vissa join-försök. Fixat i
-   `_onRoomTap()`: skickar nu alltid HELA den önskade medlemslistan
-   (befintliga medlemmar + det nya rummet), inte bara tillägget. Detta är
-   INTE en kortbugg som kan fixas mer än så här — det är hur HEOS/HA-core
-   faktiskt beter sig, och kommer inte ändras uppströms.
-3. **`media_player.play_media`s payload för HEOS-favoriter.** Kortet
-   skickar `media_content_type`/`media_content_id` rakt av från vad som är
-   sparat i configen (för Spotify manuellt inskrivet, för radio hämtat via
-   `browse_media`-bläddraren i editorn). Bekräfta att formatet stämmer mot
-   vad HEOS faktiskt förväntar sig för en sparad favorit.
-4. **`heos.group_volume_set`.** Exakt schema (`entity_id`/`level`) är en
-   kvalificerad gissning baserad på tjänstens namn i HA:s dokumentation —
-   aldrig testad live i det här projektet. Kontrollera även att tjänsten
-   fortfarande finns kvar i användarens HA-version (den kan ha ersatts av
-   generell grupp-volymhantering i senare HA-kärnor).
-5. **`media_player/browse_media`-svarets form.** Editorns radio-bläddrare
-   (`_startBrowse()`/`_drillBrowse()` i `MusicMultiroomCardEditor`) antar
-   att svaret har `title`/`children`-fält och att varje barn har
-   `can_expand`/`title`/`media_content_type`/`media_content_id`. Även om
-   detta är HA:s standardformat för media-browsern generellt, är det
-   obekräftat huruvida HEOS Favorites/TuneIn ligger direkt i browse-roten
-   eller nästlat ett steg in — bläddraren är byggd som en generisk
-   breadcrumb-navigator just för att hantera båda fallen, men den bör
-   provköras mot en riktig HEOS-installation innan den litas på.
+1. ~~**`group_members`-attributet.**~~ **BEKRÄFTAT via källkod
+   (2026-08-23):** `_get_group_members()` i HA core returnerar leader +
+   alla medlemmar, symmetriskt för samtliga gruppmedlemmar (samma lista på
+   alla). Ingen explicit "is_leader"-flagga exponeras på entitetsnivå —
+   kortets egen deterministiska "leader" (första konfigurerade rummet
+   bland medlemmarna) är en egen konstruktion, inte HEOS egen
+   `group.lead_player_id`. Se punkt 2 för varför detta spelar roll vid
+   avgruppering.
+2. ~~**`media_player.join`/`unjoin`s semantik.**~~ **BEKRÄFTAT via källkod
+   (2026-08-23), bygger vidare på den tidigare live-bekräftelsen:**
+   `async_join_players(group_members)` bygger `player_ids = [self, ...
+   group_members]` och anropar `heos.set_group(player_ids)` — ERSÄTTER
+   alltså alltid hela gruppen (matchar
+   [home-assistant/core#79298](https://github.com/home-assistant/core/issues/79298),
+   redan fixat i `_onRoomTap()` sedan `0.5.3`). **Nytt fynd:**
+   `async_unjoin_player()` är leader-beroende — om den entitet som
+   unjoinas råkar vara HEOS EGEN interna `group.lead_player_id` LÖSER DEN
+   UPP HELA GRUPPEN istället för att bara koppla loss just den entiteten;
+   för en vanlig medlem själv-tar den bara bort sig själv. Eftersom kortet
+   inte känner till HEOS riktiga interna leader (bara sin egen
+   konfigurationsordning-baserade variant) gick det inte att lita på ren
+   `unjoin` för borttagning av en enskild medlem. Fixat i `0.5.5`: när
+   ≥2 medlemmar ska finnas kvar efter borttagningen, bygg om gruppen
+   explicit via `join` under en av de kvarvarande medlemmarna istället för
+   att lita på `unjoin` — deterministiskt korrekt oavsett vem HEOS
+   internt anser vara leader.
+3. ~~**`media_player.play_media`s payload.**~~ **BEKRÄFTAT via källkod
+   (2026-08-23):** `media_content_type` `"playlist"` (Spotify-favoriter)
+   och `"favorite"` (quick-select-stil) är exakt de strängar
+   `async_play_media()` faktiskt matchar mot. **Viktigt fynd:** HEOS
+   `browse_media`-barn har ALLTID `media_content_type: ""` (tom sträng)
+   — inte `"favorite"` — och ett specialkodat `media_content_id`
+   ("heos media URI") som `async_play_media()` känner igen FÖRE någon
+   typ-koll. Kortets radio-bläddrare sparar detta rakt av, vilket är
+   korrekt — MEN editorns `setConfig()`-normalisering hade en bugg:
+   `f.media_content_type || 'favorite'` korrumperade tomma strängen
+   (falsy i JS) till `'favorite'` vid varje omladdning, vilket skulle
+   trasat uppspelning för bläddrade radiofavoriter. Fixat i `0.5.5` med
+   `??` istället för `||`.
+4. ~~**`heos.group_volume_set`.**~~ **BEKRÄFTAT via källkod
+   (2026-08-23):** exakt schema är `volume_level` (0–1) som data-fält,
+   entitet som TARGET — inte `level`+`entity_id` båda i data-payloaden
+   som tidigare gissat. Fixat i `0.5.5`. Tjänsten finns kvar i aktuell
+   HA core, inte ersatt.
+5. **`media_player/browse_media`-svarets exakta trädstruktur för HEOS
+   Favorites/TuneIn.** Källkoden bekräftar att root-noden listar alla
+   `music_sources` (inklusive TuneIn) platt, ingen separat
+   "Favorites"-container på rot-nivå — men den exakta strukturen NÄR man
+   bläddrar IN i en musik-källa (t.ex. hur många nivåer till en spelbar
+   station) är fortfarande inte verifierad mot en riktig HEOS-installation.
+   Bläddraren är byggd som en generisk breadcrumb-navigator just för att
+   hantera okänt djup, men bör provköras live innan den litas på fullt ut.
+6. **Övriga bekräftade API-fakta värda att känna till** (från samma
+   källkodsgenomgång, inget som kräver kodändring): HEOS stödjer INTE
+   seek (ingen progress-bar med scrub är möjlig, bara visning — se
+   [#1](https://github.com/johro897/music-multiroom-card/issues/1));
+   stödjer mute (`media_player.volume_mute`, se
+   [#2](https://github.com/johro897/music-multiroom-card/issues/2));
+   `state` är bara `playing`/`paused`/`idle` (aldrig `off`) — bekräftar
+   att `_computeGroups()`s `isActive`-koll redan täcker allt relevant.
+   HA:s separata Spotify-integration bekräftat ORELATERAD (kan inte
+   starta uppspelning på enheter Spotifys API inte redan känner till) —
+   det ursprungliga designvalet att bara luta sig mot HEOS egen Spotify
+   Connect-hantering via sparade favoriter står fast.
 
 **Status efter 0.5.3 (bekräftat av ägaren 2026-08-23):** avgruppering av
 högtalare som ursprungligen grupperades via HEOS-appen fungerar nu, och
