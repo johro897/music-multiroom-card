@@ -6,13 +6,20 @@ Full-page Lovelace-kort för multi-room ljudstyrning, byggt mot HA:s generiska
 features.
 
 **Uppströmsberoende:** Home Assistants inbyggda `heos`-integration
-(bygger på `pyheos`). Inget annat tredjepartsberoende. Kortet är byggt och
-TESTAT mot HEOS specifikt — även om join/unjoin/play_media tekniskt är
-generiska `media_player`-tjänster som även Sonos/Bluesound implementerar,
-görs INGEN kompatibilitetsutfästelse för andra plattformar (borttaget
-2026-08-23 på ägarens begäran — "vi anger att vi testar med HEOS för att
-inte lova för mycket"). Om kortet råkar fungera mot en annan plattform är
-det en bonus, inte ett designmål eller något som testas.
+(bygger på `pyheos`) för allt utom Spotify. Kortet är byggt och TESTAT mot
+HEOS specifikt — även om join/unjoin/play_media tekniskt är generiska
+`media_player`-tjänster som även Sonos/Bluesound implementerar, görs INGEN
+kompatibilitetsutfästelse för andra plattformar (borttaget 2026-08-23 på
+ägarens begäran — "vi anger att vi testar med HEOS för att inte lova för
+mycket"). Om kortet råkar fungera mot en annan plattform är det en bonus,
+inte ett designmål eller något som testas.
+
+**Sedan `0.7.0`:** ett andra, VALFRITT uppströmsberoende — **Music
+Assistant** (separat server/add-on, egen HEOS player-provider som pratar
+direkt med HEOS över LAN, inte via HA:s `heos`-integration) — men BARA för
+rum som konfigurerat `mass_entity`, och BARA för Spotify-favoriter. Se
+"Music Assistant-integrationen (Spotify)" nedan för hela bakgrunden och
+`README.md` för options-tabellen.
 
 ## Bakgrund / design
 
@@ -178,6 +185,18 @@ HEOS-installation eftersom källkoden inte visar allt (t.ex. exakta
    har typiskt ingen duration, vilket redan hanteras genom att baren
    bara döljs) — provkör mot en riktig Spotify-låt/HEOS-favorit live för
    att se att den faktiskt ritas och tickar rätt.
+9. **Spotify-via-MA (`0.7.0`, [#9](https://github.com/johro897/music-multiroom-card/issues/9)).**
+   Två separata obekräftade punkter, oberoende av varandra:
+   - Om `play_media` mot ett rums `mass_entity` faktiskt spelar ut över
+     HELA en HEOS-grupp som formats via native `heos.join`, eller bara på
+     den fysiska enheten själv. Rimligt antagande (gruppering är fysiskt
+     HEOS-tillstånd som MA:s egen HEOS-provider också läser via sin egen
+     anslutning) men INTE bekräftat — MA har även en egen separat "Sync
+     Group Player"-provider (synlig i loggarna) som skulle kunna ha ett
+     eget, icke-överlappande gruppbegrepp.
+   - Music Assistants `browse_media`-svarsform för Spotify-innehåll —
+     picker-koden återanvänder samma generiska breadcrumb-logik som redan
+     är liveverifierad mot HEOS, men själva MA-formen är obekräftad.
 
 **Ihågkom vid ändring av `_isDirty()`:** `media_position`/`media_duration`/
 `media_position_updated_at` läggs MEDVETET INTE till i den bevakade
@@ -205,6 +224,73 @@ separat innan kodning. Uppdatera denna sektion med vad som faktiskt
 observerades så fort testet är kört, oavsett om antagandena stämde eller
 inte (mönster: se t.ex. `tplink-switch-card/CLAUDE.md`s
 "Kräver manuell verifiering"-sektion).
+
+## Music Assistant-integrationen (Spotify) — bakgrund och fynd
+
+**Varför HEOS egen Spotify-hantering aldrig kunde lösa detta:** research
+och live-testning (2026-08-22/23, innan `0.7.0` byggdes) bekräftade att
+HEOS App:s "Spotify"-musikkälla bara exponerar vad som redan synkats in i
+HEOS EGET bibliotek — aldrig riktig live-uppspelning från det faktiskt
+länkade Spotify-kontot. HA:s separata `spotify`-integration är också
+orelaterad (kan bara "ta över" en enhet som redan är synlig i Spotifys
+moln-API, vilket kräver en lokal Zeroconf-handskakning HEOS-högtalare
+aldrig gör med en server-baserad klient). Music Assistants Spotify-
+provider (`librespot`) löser det genom att logga in med det riktiga
+kontot och avkoda ljudet direkt, sedan skicka en vanlig ljudström till
+HEOS via MA:s HEOS-provider — bekräftat via HEOS-appens egen visning av
+"URL Stream" som aktiv källa (exakt det MA:s egna dokumentation beskriver:
+metadata visas som "URL stream" pga API-begränsningar, inte HEOS egen
+Spotify-session).
+
+**Docker-driftsättning:** `docker-compose`-stack för `ghcr.io/music-
+assistant/server`, `network_mode: host` (obligatoriskt enligt MA:s egen
+dokumentation — mDNS/UPnP-upptäckt fungerar inte över bridge-nätverk),
+data på `/srv/homeautomation/musicassistant:/data`, healthcheck via
+`python3`-socket-check istället för curl/wget (finns inte i imagen,
+bekräftat från `Dockerfile.base`).
+
+**Felsökningssaga (2026-08-23), i ordning — värt att känna till om
+liknande symptom dyker upp igen:**
+
+1. **Kontroller-anslutningen failade periodvis** med `System error -519
+   (12)`. Avkodat från `pyheos`s faktiska källkod: formatet är
+   `"{text} ({error_id})"` där `error_id`(`eid`) är HEOS-protokollets
+   EGNA generiska felkod (12 = "System Error", samma kod som det tidigare
+   "-9 (12)"-felet i det ursprungliga kortprojektet) och `text` innehåller
+   ett internt `syserrno` från HEOS-enhetens egen inbäddade mjukvara
+   (`-519`, inte ett vanligt Linux-errno — odokumenterat internt
+   Denon-kod). Grundorsak: den specifika enheten (Hallen) hade suttit i
+   ett fastlåst tillstånd efter att MA gjort massvis av snabba
+   tvångs-avgrupperingar (`set_members`) mot den. **Fix: strömcykla den
+   berörda HEOS-enheten fysiskt.** Löste sig helt efter omstart av
+   enheten — inget kvarvarande MA-konfigurationsproblem.
+2. **Uppspelning startade ("URL Stream" i HEOS-appen) men gav inget
+   ljud, helt utan fel i loggen — på FLERA olika HEOS-enheter OCH på en
+   Cast/AirPlay-soundbar.** Uteslutet i tur och ordning: fel ljudformat
+   (testat FLAC och MP3), VLAN-segmentering (bekräftat samma VLAN), Wi-Fi
+   client isolation (den drabbade enheten satt på Ethernet), dubbel
+   kontroll (samma resultat med native `heos`-integrationen avstängd),
+   DNS-filter/adblock (inget sådant kört), MA:s egen ström-pipeline (MA:s
+   inbyggda webbspelare fungerade perfekt — bevisade att grundläggande
+   ljudgenerering/ffmpeg var friskt). **Verklig grundorsak, bevisad med
+   `tcpdump`:** värdens brandvägg (`ufw`) hade bara `8095/tcp`
+   (webb-UI:t) explicit öppnad — inte `8097/tcp` (MA:s streamserver) eller
+   `8927/tcp` (Sendspin, används för Cast/AirPlay-bryggor). `nc`-testet
+   som INITIALT verkade bekräfta att porten var nåbar var en falsk
+   positiv — det kördes från samma fysiska maskin som Docker-värden, ett
+   effektivt loopback-test som `ufw` inte filtrerar, medan riktig extern
+   LAN-trafik (från högtalarna) tystades helt (SYN skickades upprepade
+   gånger med TCP:s vanliga backoff-mönster, aldrig ett SYN-ACK tillbaka).
+   **Fix:** `sudo ufw allow 8097/tcp` + `sudo ufw allow 8927/tcp`.
+   **Läxa för framtida liknande felsökning:** ett lyckat `nc`/`telnet`-
+   test FRÅN samma maskin som servern bevisar ingenting om extern
+   nåbarhet — testa alltid från en riktig ANNAN enhet på nätverket, eller
+   verifiera med `tcpdump` på servern att paket faktiskt kommer in
+   utifrån.
+3. Ett tredje, orelaterat AirPlay-fel (`60" Crystal UHD` TV) visade sig
+   vara en helt mundan parkopplings-fråga (AirPlay 2 kräver PIN-inmatning
+   i MA:s webbgränssnitt) — inte kopplat till ovanstående alls, värt att
+   inte blanda ihop symptomen om det dyker upp igen.
 
 ## Screenshot
 

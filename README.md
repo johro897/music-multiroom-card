@@ -27,12 +27,14 @@ or any other platform.
 - **Group volume + per-room fine adjustment.** One slider for the whole
   group, with an expandable per-room slider that preserves relative balance
   rather than forcing every speaker to the same level.
-- **Spotify + Radio favorites shelf.** Both are picked visually in the
-  card editor by browsing HEOS's own music sources — including your real
-  Spotify playlists (browse into "Spotify") and radio stations (browse
-  into "TuneIn"/"Favorites") — no IDs or names to type in by hand. HEOS
-  only exposes what's already starred as a Favorite there, so star it in
-  the HEOS app first if it isn't showing up.
+- **Spotify + Radio favorites shelf, on two different backends.** Radio
+  favorites are picked by browsing HEOS's own sources, same as always. **If
+  a room has a Music Assistant entity configured**, its Spotify favorites
+  are instead browsed and played through **Music Assistant** — your real
+  Spotify library and account, not HEOS's own limited Spotify handling.
+  Both are picked visually in the editor, no IDs or names to type in by
+  hand. Grouping, volume, and transport all stay on native HEOS regardless
+  of which backend a favorite plays from.
 - **Built-in GUI editor**, including the browse-and-pick flow — no YAML
   required to configure the card.
 - English/Swedish UI, theme-aware colors (dark and light Home Assistant
@@ -74,20 +76,22 @@ rooms:
   - entity: media_player.heos_living_room
     name: Living Room
     icon: mdi:sofa
+    mass_entity: media_player.mass_living_room   # optional — enables real Spotify playback
   - entity: media_player.heos_kitchen
     name: Kitchen
     icon: mdi:fridge
 favorites:
-  spotify: []   # populate via the editor's "Browse HEOS" picker
-  radio: []     # same picker, just choose "Radio" when adding
+  spotify: []   # populate via the editor's "Browse Spotify" picker (needs mass_entity)
+  radio: []     # populate via the editor's "Browse HEOS" picker
 ```
 
 ### Options
 
 | Option | Type | Required | Description |
 |---|---|---|---|
-| `rooms` | list | yes | Media player entities that can be grouped. Each entry: `entity`, optional `name` (defaults to the entity id), optional `icon` (defaults to `mdi:speaker`). |
-| `favorites.spotify` / `favorites.radio` | list | no | Playable favorites, split into two tabs at runtime. **Both populated by the same browse picker** in the card editor — open the editor, pick a room to browse from, click "Browse HEOS", drill into a source (e.g. "Spotify" for your own playlists, "TuneIn" or "Favorites" for radio), tick what you want, choose which tab it should land in, then "Add selected". Only things already starred as a Favorite in the HEOS app show up — there's no search. |
+| `rooms` | list | yes | Media player entities that can be grouped. Each entry: `entity` (HEOS), optional `name` (defaults to the entity id), optional `icon` (defaults to `mdi:speaker`), optional `mass_entity` (that room's Music Assistant counterpart for the *same* physical speaker — leave unset if this room isn't managed by Music Assistant). |
+| `favorites.spotify` | list | no | Spotify favorites, played via **Music Assistant**. Populated in the editor by picking a room that has `mass_entity` set, clicking "Browse Spotify", and picking real items from your own Spotify library. Rooms without `mass_entity` can't play these — the tab shows a hint instead. |
+| `favorites.radio` | list | no | Radio favorites, played via **native HEOS**, unchanged from before. Populated by picking any configured room, clicking "Browse HEOS", and drilling into a source like "TuneIn" or "Favorites". Only things already starred as a Favorite in the HEOS app show up — there's no search. |
 
 > **Note on favorites:** runtime playback always replays the saved
 > `media_content_type`/`media_content_id` for a favorite — the card never
@@ -97,11 +101,19 @@ favorites:
 ## How it works
 
 - Grouping/ungrouping calls Home Assistant's generic `media_player.join`
-  and `media_player.unjoin` services.
-- Playing a favorite calls `media_player.play_media` with the favorite's
-  saved `media_content_type`/`media_content_id`.
+  and `media_player.unjoin` services — always against the room's HEOS
+  `entity`, never its `mass_entity`, no matter what's playing.
 - The group volume slider calls `heos.group_volume_set`; the per-room
-  slider calls the standard `media_player.volume_set`.
+  slider calls the standard `media_player.volume_set` — both native HEOS,
+  always.
+- Playing a **radio** favorite calls `media_player.play_media` against the
+  focused group's HEOS leader, same as every other command here.
+- Playing a **Spotify** favorite calls `media_player.play_media` against
+  that room's **`mass_entity`** instead — Music Assistant's own entity for
+  the same physical speaker. The group itself stays exactly as native HEOS
+  formed it; only the playback source is a different integration. A room
+  with no `mass_entity` configured can't play Spotify favorites — it shows
+  an error instead of silently doing nothing.
 - Which rooms are currently grouped together is read directly from each
   room's `group_members` attribute — the card doesn't track grouping
   itself, so it stays in sync with grouping done from the HEOS app or
@@ -128,6 +140,21 @@ favorites:
   added resource alongside a HACS-managed one) — see this project's
   paraplymapp-level `CLAUDE.md` for the full pattern; it isn't specific to
   this card.
+- **Spotify tab shows a hint instead of favorites / tapping a Spotify
+  favorite does nothing but shows an error toast.** The focused room has
+  no `mass_entity` configured — add one in the editor (that room's own
+  Music Assistant entity for the same physical speaker), or accept that
+  Spotify isn't available in that room.
+- **Music Assistant runs but nothing plays (no error, or a generic "could
+  not decode"/"unable to play media" error), even though everything looks
+  configured correctly.** This is a Music Assistant/network issue, not
+  this card — check that the host running Music Assistant actually allows
+  inbound connections on its stream ports (default 8097, plus 8927 for
+  Sendspin/Cast/AirPlay) from your speakers' subnet. A host firewall that
+  only opened the web UI port (8095) will let you browse and "start"
+  playback with no error while the actual audio never reaches the
+  speaker — confirmed live, traced with `tcpdump` showing the speaker's
+  connection attempts being silently dropped.
 
 ## Known limitations
 
@@ -143,8 +170,50 @@ favorites:
   levels down a playable station sits) isn't confirmed against a live
   system yet — the picker handles arbitrary depth generically, but hasn't
   been exercised against real data at every level.
+- **Music Assistant's `browse_media` shape for Spotify content** isn't
+  confirmed against a live Music Assistant entity yet — the picker reuses
+  the same generic tree-walking logic as HEOS's, but the HEOS side is the
+  one that's actually been exercised live so far.
+- **Whether `play_media` against a `mass_entity` plays across a HEOS group
+  formed via the native integration** isn't confirmed yet — grouping is
+  physical HEOS state that Music Assistant's own HEOS provider should also
+  see, but Music Assistant also has its own separate "Sync Group Player"
+  concept that might not automatically follow it. First real beta test.
 
 ## Changelog
+
+### 0.7.0
+
+- **Hybrid backend: real Spotify playback via Music Assistant, radio stays
+  on native HEOS.** Each room gets a new optional `mass_entity` field
+  (that room's Music Assistant counterpart for the same physical
+  speaker). Spotify favorites now browse and play through Music Assistant
+  — a real Spotify account and library, not HEOS's own limited Spotify
+  handling — while grouping, volume, transport, and radio favorites are
+  completely unchanged, still 100% native HEOS. A room without
+  `mass_entity` configured simply can't play Spotify favorites (clear
+  hint in the UI, error toast on tap, no silent failure).
+- The editor's Favorites section is now two separate blocks instead of
+  one shared browse-and-toggle flow — Spotify (browsed from a room's
+  `mass_entity`) and Radio (browsed from a room's `entity`, exactly as
+  before) — since they now genuinely hit two different backends rather
+  than being two tags on the same HEOS browse tree.
+- Root cause of why HEOS's own Spotify handling could never work for
+  this: browsing into HEOS's "Spotify" source only ever exposes what's
+  already synced into HEOS's own library, never live playback from the
+  actual linked Spotify account — confirmed via extensive live testing.
+  Music Assistant's Spotify provider decodes the real account's audio
+  directly (confirmed via its own `player_support`/output-protocol
+  behavior showing as a generic "URL stream" on the HEOS device, not a
+  HEOS-native Spotify session) and hands it to HEOS as a plain stream.
+- Verified with a scripted test: Spotify favorite tap on a room with
+  `mass_entity` routes to that entity; on a room without it, no service
+  call fires and an error toast shows instead; radio favorite tap is
+  unchanged; the editor's two browse sections independently resolve to
+  the correct target entity and add to the correct favorites list.
+- **Not yet confirmed live**: whether playback started on a `mass_entity`
+  actually plays across a HEOS group formed via the native integration —
+  see Known limitations.
 
 ### 0.6.3
 
