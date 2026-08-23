@@ -402,25 +402,33 @@
       fill.style.width = `${(current / duration) * 100}%`;
     }
 
+    // Single source of truth for "which backend actually owns this room's
+    // current playback" — HEOS and Music Assistant behave differently
+    // enough (metadata, queue contents, pause support) that display logic
+    // needs one consistent answer instead of each place re-deriving its
+    // own heuristic. A room's mass_entity is considered "driving"
+    // whenever it's itself actively playing or paused; grouping, volume,
+    // and transport commands never consult this — they always target the
+    // HEOS entity regardless of who's driving. Returns the mass_entity id
+    // when MA is driving, otherwise null.
+    _massDrivingEntity(leaderEntity) {
+      const room = this._config?.rooms.find((r) => r.entity === leaderEntity);
+      if (!room?.mass_entity) return null;
+      const massSt = this._hass.states[room.mass_entity];
+      return massSt && (massSt.state === 'playing' || massSt.state === 'paused') ? room.mass_entity : null;
+    }
+
     // HEOS reports generic, useless metadata ("Url Stream"/"Url Stream")
     // for anything Music Assistant hands it to play — confirmed live
     // (2026-08-23), matches Music Assistant's own documented limitation
-    // ("metadata shows as URL stream due to HEOS API constraints"). The
-    // room's mass_entity is the one that actually knows what's playing,
-    // so prefer its attributes for display whenever it's actively
-    // relevant — but never for `state`/`supported_features`, since
-    // transport commands and availability still target the HEOS entity.
-    // Checks 'paused' as well as 'playing': found live (2026-08-23) that
-    // pausing Spotify content flips the mass_entity to 'paused' too, and
-    // checking only 'playing' meant the title/artist reverted to HEOS's
-    // "Url Stream" placeholder the instant you paused.
+    // ("metadata shows as URL stream due to HEOS API constraints"). Prefer
+    // the driving mass_entity's attributes for display when there is one
+    // — but never for `state`/`supported_features`, since transport
+    // commands and availability still target the HEOS entity.
     _metaAttributes(leaderEntity) {
-      const hass = this._hass;
-      const st = hass.states[leaderEntity];
-      const room = this._config?.rooms.find((r) => r.entity === leaderEntity);
-      const massSt = room?.mass_entity ? hass.states[room.mass_entity] : null;
-      const massActive = massSt && (massSt.state === 'playing' || massSt.state === 'paused');
-      return massActive ? massSt.attributes : st?.attributes;
+      const massEntity = this._massDrivingEntity(leaderEntity);
+      if (massEntity) return this._hass.states[massEntity].attributes;
+      return this._hass.states[leaderEntity]?.attributes;
     }
 
     // ---- group derivation ------------------------------------------------
@@ -673,10 +681,17 @@
         .catch((err) => this._notifyError(t(this._hass, 'error_play'), err));
     }
 
+    // Debounced the same way _onRoomTap already is (via _guardPending) —
+    // found live (2026-08-23) that a touchscreen double-firing a single
+    // physical tap into two click events would send a command twice with
+    // no protection here, unlike every other interactive control in this
+    // card. A duplicated `next` is easy to blame on an upstream Spotify
+    // skip-limit and never notice it was actually us.
     _onTransport(cmd) {
       const groups = this._computeGroups();
       const focusedLeader = this._resolveFocusedLeader(groups);
       if (!focusedLeader || !this._hass) return;
+      if (this._guardPending(`transport:${focusedLeader}:${cmd}`)) return;
       const svc =
         cmd === 'play_pause'
           ? 'media_play_pause'
@@ -697,25 +712,49 @@
         .catch((err) => this._notifyError(t(this._hass, 'error_volume'), err));
     }
 
-    // Fetches what plays after the current track via heos.get_queue.
-    // [UNVERIFIED] assumes queue[0] is the currently playing item and
-    // queue[1] is next — pyheos's QueueItem carries no explicit
-    // current-position flag to confirm this from source alone, needs
-    // live confirmation against a real HEOS queue. Failures are swallowed
-    // quietly (no toast) since this is a display-only nicety, not a
-    // user-initiated action.
+    // Fetches what plays after the current track — from whichever backend
+    // is actually driving (see _massDrivingEntity). HEOS's own get_queue
+    // only knows its own queue, meaningless for anything Music Assistant
+    // is playing (same "Url Stream" problem as its title/artist — found
+    // live, 2026-08-23). Music Assistant has a real equivalent,
+    // `music_assistant.get_queue`, confirmed from home-assistant/core's
+    // music_assistant/media_player.py source (2026-08-23): it returns an
+    // explicit `next_item` field, no positional guessing required — the
+    // queue_item shape is `{name, duration, media_item: {name, artists:
+    // [{name}], album, ...}}` (also confirmed from source, schemas.py).
+    // HEOS's own [UNVERIFIED] queue[1]-is-next assumption is unchanged
+    // and still needs live confirmation for the radio/HEOS path — see
+    // CLAUDE.md. Failures are swallowed quietly (no toast) since this is
+    // a display-only nicety, not a user-initiated action.
     async _refreshNextTrack(focusedLeader, key) {
+      const massEntity = this._massDrivingEntity(focusedLeader);
       try {
-        const result = await this._hass.connection.sendMessagePromise({
-          type: 'call_service',
-          domain: 'heos',
-          service: 'get_queue',
-          service_data: {},
-          target: { entity_id: focusedLeader },
-          return_response: true,
-        });
-        const queue = result?.response?.[focusedLeader]?.queue || [];
-        const next = queue[1] || null;
+        let next = null;
+        if (massEntity) {
+          const result = await this._hass.connection.sendMessagePromise({
+            type: 'call_service',
+            domain: 'music_assistant',
+            service: 'get_queue',
+            service_data: {},
+            target: { entity_id: massEntity },
+            return_response: true,
+          });
+          const nextItem = result?.response?.[massEntity]?.next_item;
+          if (nextItem) {
+            next = { song: nextItem.name, artist: nextItem.media_item?.artists?.[0]?.name || '' };
+          }
+        } else {
+          const result = await this._hass.connection.sendMessagePromise({
+            type: 'call_service',
+            domain: 'heos',
+            service: 'get_queue',
+            service_data: {},
+            target: { entity_id: focusedLeader },
+            return_response: true,
+          });
+          const queue = result?.response?.[focusedLeader]?.queue || [];
+          next = queue[1] || null;
+        }
         if (this._nextTrackCache.key === key) {
           this._nextTrackCache.next = next;
           this._render();
@@ -764,7 +803,13 @@
 
       const leaderState = focusedLeader ? hass.states[focusedLeader] : null;
       const isPlaying = leaderState?.state === 'playing';
-      const nextKey = isPlaying ? `${focusedLeader}|${leaderState?.attributes?.media_title || ''}` : null;
+      // Keyed off _metaAttributes' title, not the HEOS entity's own
+      // media_title directly — for Music Assistant content the HEOS
+      // entity's title is permanently "Url Stream" (see _metaAttributes),
+      // so keying on it would never change between tracks and the "Up
+      // next" cache would go stale after the very first track of a
+      // session (found live, 2026-08-23).
+      const nextKey = isPlaying ? `${focusedLeader}|${this._metaAttributes(focusedLeader)?.media_title || ''}` : null;
       if (nextKey && nextKey !== this._nextTrackCache.key) {
         this._nextTrackCache = { key: nextKey, next: null };
         this._refreshNextTrack(focusedLeader, nextKey);

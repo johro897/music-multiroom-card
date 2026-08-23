@@ -219,8 +219,10 @@ favorites:
 - No seek/progress bar or shuffle/repeat controls yet — HEOS doesn't
   support seeking at all; shuffle/repeat tracked as
   [#1](https://github.com/johro897/music-multiroom-card/issues/1).
-- The "Up next" line's assumption about which queue position is "next"
-  isn't confirmed against a live queue yet — see CLAUDE.md.
+- The "Up next" line's HEOS/radio path still assumes the queue's second
+  position is "next" — isn't confirmed against a live HEOS queue yet
+  (the Spotify/Music Assistant path uses an explicit `next_item` field
+  instead, no assumption involved there). See CLAUDE.md.
 - `browse_media`'s exact tree depth for HEOS Favorites/TuneIn (how many
   levels down a playable station sits) isn't confirmed against a live
   system yet — the picker handles arbitrary depth generically, but hasn't
@@ -237,6 +239,29 @@ favorites:
   entity directly in Developer Tools.
 
 ## Changelog
+
+### 0.7.0 (beta-0.7.4)
+
+- Fix: "Up next" showed "Url Stream — Url Stream" for Spotify content.
+  It was reading HEOS's own queue, which — same as its title/artist —
+  is meaningless for anything Music Assistant is driving. It now asks
+  whichever backend actually owns the room's playback: Music
+  Assistant's own `music_assistant.get_queue` action (a real `next_item`
+  field, no guessing) when Music Assistant is driving, HEOS's
+  `heos.get_queue` unchanged otherwise. Also fixed a related cache bug
+  this surfaced: the "next track" cache was keyed on HEOS's own title,
+  which never changes for Spotify content, so it would go stale after
+  the first track of a session.
+- Fix: a touchscreen double-firing a single tap into two click events
+  could send a transport command (Next/Prev/Play/Pause/Stop) twice with
+  no protection — every other interactive control in this card already
+  guards against that, transport just never had it. Likely explanation
+  for an oddly-quick "Spotify skip limit reached" error seen live after
+  what felt like a single tap.
+- Internal: introduced one shared `_massDrivingEntity()` check for
+  "is Music Assistant or HEOS actually driving this room's playback
+  right now" — both the metadata fix and this Up Next fix now use it,
+  instead of each re-deriving its own version of the same check.
 
 ### 0.7.0 (beta-0.7.3)
 

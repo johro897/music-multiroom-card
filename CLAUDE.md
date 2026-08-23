@@ -174,14 +174,15 @@ HEOS-installation eftersom källkoden inte visar allt (t.ex. exakta
    Bekräftat via källkod: `get_queue` har `supports_response=ONLY` och
    returnerar `{queue: [...]}` där varje objekt är en `pyheos.QueueItem`
    (`song`/`artist`/`album`/`image_url`/`media_id`/`album_id`/`queue_id`).
-   **Obekräftat:** `_refreshNextTrack()` antar att `queue[0]` är den just
-   nu spelande låten och `queue[1]` är "next" — `QueueItem` saknar ett
-   explicit "is_current"-fält i källkoden för att bekräfta detta
-   positionellt. Om antagandet är fel visas fel låt (eller ingen) i
-   "Up next"-raden — provkör mot en riktig kö innan detta litas på fullt
-   ut. Felaktigt/tomt svar hanteras redan tyst (ingen toast, bara ingen
-   rad visas), så en felaktig gissning här är kosmetisk, inte trasig
-   funktionalitet.
+   **Obekräftat, gäller numera bara HEOS/radio-vägen** (se `0.7.4` nedan
+   för Spotify-vägen, som inte har det här problemet alls):
+   `_refreshNextTrack()` antar att `queue[0]` är den just nu spelande
+   låten och `queue[1]` är "next" — `QueueItem` saknar ett explicit
+   "is_current"-fält i källkoden för att bekräfta detta positionellt. Om
+   antagandet är fel visas fel låt (eller ingen) i "Up next"-raden —
+   provkör mot en riktig kö innan detta litas på fullt ut. Felaktigt/tomt
+   svar hanteras redan tyst (ingen toast, bara ingen rad visas), så en
+   felaktig gissning här är kosmetisk, inte trasig funktionalitet.
 8. **Progress-baren (`0.6.1`, [#1](https://github.com/johro897/music-multiroom-card/issues/1)).**
    HEOS stödjer inte seek (se punkt 6) — baren är alltid ren visning.
    Obekräftat om HEOS faktiskt populerar `media_position`/
@@ -361,6 +362,44 @@ inte skriptad testning den här gången), alla fixade samma dag:**
   har aldrig skett. `_onRoomTap()`s "owning"-gren anropade ändå `unjoin`
   blint. Fixat: om `owning.memberEntities.length < 2` (ingen riktig
   HEOS-grupp) rensas bara fokus lokalt, inget tjänsteanrop görs alls.
+
+**Två fynd från `beta-0.7.3`-testningen (2026-08-23), `beta-0.7.4`:**
+
+- **`Reached skip limit (17)` vid vad ägaren upplevde som ETT enda
+  Next-tryck.** Utredning tillsammans med ägaren: Spotifys skip-gräns
+  gäller historiskt bara framåt-skip (aldrig bakåt) — matchar att
+  Previous fungerade — så en riktig Spotify-gräns var fortfarande
+  troligt en del av förklaringen. MEN: en verklig kodlucka hittades
+  också — `_onTransport()` (Next/Prev/Play/Pause/Stop) saknade det
+  `_guardPending()`-dubbeltrycksskydd som `_onRoomTap()` redan hade.
+  Om en pekskärm någon gång dubbelfyrar ett fysiskt tryck till två
+  click-events (känt beteende på vissa kiosk-webbläsare) hade kortet
+  skickat kommandot två gånger utan att ägaren märkt det — vilket över
+  en dags testande kan ackumulera mot en gräns mycket snabbare än
+  antalet upplevda tryck antyder. Fixat: samma `_guardPending()`-mönster
+  applicerat på `_onTransport()`, nyckel `transport:${entity}:${cmd}`.
+  **Inte bekräftat som DEN faktiska orsaken** till just "17" — bara en
+  verklig, tidigare oskyddad kodväg som nu är åtgärdad oavsett.
+- **"Up next" visade "Url Stream — Url Stream" för Spotify-innehåll**
+  — samma grundorsak som titel/artist-buggen: `heos.get_queue` frågar
+  HEOS EGEN kö, som för MA-drivet innehåll bara känner till en generisk
+  URL-ström. Ägaren frågade uttryckligen "finns inte detta från MA?" —
+  och det gjorde det: `music_assistant.get_queue` är en riktig, egen
+  tjänst i HA cores `music_assistant`-integration, bekräftat från
+  källkoden (`homeassistant/components/music_assistant/media_player.py`,
+  `_async_handle_get_queue`) — returnerar ett explicit `next_item`-fält
+  (`{name, duration, media_item: {name, artists: [{name}], album, ...}}`,
+  bekräftat från `schemas.py`s `queue_item_dict_from_mass_item`/
+  `media_item_dict_from_mass_item`), INGEN positionsgissning som HEOS
+  egen `queue[1]`-variant. Fixat: en ny delad `_massDrivingEntity()`-
+  metod (samma villkor som redan fanns i `_metaAttributes()`, nu
+  refaktorerad till att använda den gemensamma metoden istället för att
+  duplicera logiken) avgör vilken backend som styr rummet just nu;
+  `_refreshNextTrack()` frågar rätt tjänst beroende på svaret. Löste
+  också en följdbugg: `nextKey`-cachen nycklades på HEOS-entitetens EGNA
+  `media_title` (konstant "Url Stream" för Spotify), så cachen skulle
+  aldrig ogiltigförklaras mellan olika låtar — nycklas nu på
+  `_metaAttributes()`s (riktiga) titel istället.
 
 ## Screenshot
 
