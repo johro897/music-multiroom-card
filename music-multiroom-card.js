@@ -390,9 +390,9 @@
       if (!fill || !this._hass) return;
       const groups = this._computeGroups();
       const focusedLeader = this._resolveFocusedLeader(groups);
-      const st = focusedLeader ? this._hass.states[focusedLeader] : null;
+      const st = focusedLeader ? this._hass.states[this._driveEntity(focusedLeader)] : null;
       if (st?.state !== 'playing') return;
-      const meta = this._metaAttributes(focusedLeader);
+      const meta = st.attributes;
       const duration = meta?.media_duration;
       const position = meta?.media_position;
       const updatedAt = meta?.media_position_updated_at;
@@ -418,17 +418,30 @@
       return massSt && (massSt.state === 'playing' || massSt.state === 'paused') ? room.mass_entity : null;
     }
 
+    // Whichever entity actually owns this room's playback right now — the
+    // mass_entity when Music Assistant is driving, the HEOS entity
+    // otherwise. Transport commands (play/pause/stop/next/prev) and the
+    // main button's own status (playing/paused, which commands it
+    // supports) both target/read THIS entity — confirmed live
+    // (2026-08-23) that routing a "next" through the HEOS entity for
+    // MA-driven content behaves differently (worse — see CLAUDE.md) than
+    // asking Music Assistant directly, so once MA is confirmed driving,
+    // everything about controlling ITS playback should go straight to it.
+    // Grouping, volume, and mute stay on the HEOS entity unconditionally
+    // regardless — decided with the owner (2026-08-23): Music Assistant
+    // has no equivalent to controlling a whole physical HEOS group's
+    // volume, only its own single device, so there's no consistent way
+    // to route those through it even if we wanted to.
+    _driveEntity(leaderEntity) {
+      return this._massDrivingEntity(leaderEntity) || leaderEntity;
+    }
+
     // HEOS reports generic, useless metadata ("Url Stream"/"Url Stream")
     // for anything Music Assistant hands it to play — confirmed live
     // (2026-08-23), matches Music Assistant's own documented limitation
-    // ("metadata shows as URL stream due to HEOS API constraints"). Prefer
-    // the driving mass_entity's attributes for display when there is one
-    // — but never for `state`/`supported_features`, since transport
-    // commands and availability still target the HEOS entity.
+    // ("metadata shows as URL stream due to HEOS API constraints").
     _metaAttributes(leaderEntity) {
-      const massEntity = this._massDrivingEntity(leaderEntity);
-      if (massEntity) return this._hass.states[massEntity].attributes;
-      return this._hass.states[leaderEntity]?.attributes;
+      return this._hass.states[this._driveEntity(leaderEntity)]?.attributes;
     }
 
     // ---- group derivation ------------------------------------------------
@@ -681,27 +694,35 @@
         .catch((err) => this._notifyError(t(this._hass, 'error_play'), err));
     }
 
-    // Debounced the same way _onRoomTap already is (via _guardPending) —
-    // found live (2026-08-23) that a touchscreen double-firing a single
-    // physical tap into two click events would send a command twice with
-    // no protection here, unlike every other interactive control in this
-    // card. A duplicated `next` is easy to blame on an upstream Spotify
-    // skip-limit and never notice it was actually us.
+    // Targets whichever entity is actually driving (see _driveEntity) —
+    // confirmed live (2026-08-23) that relaying "next" through the HEOS
+    // entity for MA-driven content misbehaves (see CLAUDE.md), so once
+    // Music Assistant is driving, transport goes straight to it instead.
+    // Also debounced the same way _onRoomTap already is (via
+    // _guardPending) — found live (2026-08-23) that a touchscreen
+    // double-firing a single physical tap into two click events would
+    // send a command twice with no protection here, unlike every other
+    // interactive control in this card. A duplicated `next` is easy to
+    // blame on an upstream Spotify skip-limit and never notice it was
+    // actually us.
     _onTransport(cmd) {
       const groups = this._computeGroups();
       const focusedLeader = this._resolveFocusedLeader(groups);
       if (!focusedLeader || !this._hass) return;
-      if (this._guardPending(`transport:${focusedLeader}:${cmd}`)) return;
+      const targetEntity = this._driveEntity(focusedLeader);
+      if (this._guardPending(`transport:${targetEntity}:${cmd}`)) return;
       const svc =
         cmd === 'play_pause'
           ? 'media_play_pause'
+          : cmd === 'play'
+          ? 'media_play'
           : cmd === 'next'
           ? 'media_next_track'
           : cmd === 'stop'
           ? 'media_stop'
           : 'media_previous_track';
       this._hass
-        .callService('media_player', svc, {}, { entity_id: focusedLeader })
+        .callService('media_player', svc, {}, { entity_id: targetEntity })
         .catch((err) => this._notifyError(t(this._hass, 'error_transport'), err));
     }
 
@@ -872,31 +893,38 @@
             </div>
           </div>`;
       }
-      const st = hass.states[focusedLeader];
+      // Whichever entity is actually driving this room's playback — see
+      // _driveEntity. Its own state/attributes are authoritative for
+      // everything in this hero: playing/paused, title/artist/art,
+      // progress, and which transport commands are actually supported.
+      const driveEntity = this._driveEntity(focusedLeader);
+      const st = hass.states[driveEntity];
       const isPlaying = st?.state === 'playing';
       const isPaused = st?.state === 'paused';
-      // See _metaAttributes: HEOS reports generic "Url Stream" metadata
-      // for anything Music Assistant hands it, so display fields come
-      // from the room's mass_entity when it's the one actually playing.
-      const meta = this._metaAttributes(focusedLeader);
+      const meta = st?.attributes;
       const title = meta?.media_title || t(hass, 'no_media');
       const artist = meta?.media_artist || '';
       const picture = meta?.entity_picture;
-      const features = st?.attributes?.supported_features || 0;
+      const features = meta?.supported_features || 0;
       const canStop = !!(features & FEATURE_STOP);
       // Some sources — confirmed live (2026-08-23): HEOS radio streams —
       // don't support pause at all, only stop (pausing a live stream
-      // isn't meaningful the way pausing a track is). Calling
-      // media_play_pause there fails outright ("does not support
-      // action"). Fall the main transport button back to Stop in that
-      // case instead, and skip the separate Stop button so it isn't
-      // shown twice.
+      // isn't meaningful the way pausing a track is). media_play_pause
+      // fails outright ("does not support action") on such an entity
+      // REGARDLESS of direction — not just when it would resolve to
+      // "pause", also when idle and it would resolve to plain "play"
+      // (found live 2026-08-23: after Stop, the Play button itself
+      // stopped working, because it was still calling the combined
+      // play_pause service). So when PAUSE isn't supported, avoid
+      // play_pause entirely — call the direct, unambiguous service for
+      // whichever direction is actually needed instead.
       const canPause = !!(features & FEATURE_PAUSE);
-      const mainUsesStop = isPlaying && !canPause && canStop;
-      const mainCmd = mainUsesStop ? 'stop' : 'play_pause';
-      const mainIcon = isPlaying ? (mainUsesStop ? iconStop() : iconPause()) : iconPlay();
-      const mainLabelKey = isPlaying ? (mainUsesStop ? 'stop' : 'pause') : 'play';
-      const showExtraStop = canStop && !mainUsesStop;
+      const mainCmd = canPause ? 'play_pause' : isPlaying ? 'stop' : 'play';
+      const mainIcon = isPlaying ? (canPause ? iconPause() : iconStop()) : iconPlay();
+      const mainLabelKey = isPlaying ? (canPause ? 'pause' : 'stop') : 'play';
+      // The separate Stop button is only worth showing alongside a main
+      // button that isn't already covering Stop itself.
+      const showExtraStop = canStop && canPause;
       const names = focusedGroup.memberEntities.map(
         (id) => this._config.rooms.find((r) => r.entity === id)?.name || id
       );

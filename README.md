@@ -72,10 +72,12 @@ So the card splits by what each integration is actually good at:
 Music Assistant is entirely **optional**. Skip it and the card works
 exactly like it always has, minus real Spotify playback — every room
 just won't have a `mass_entity` set, and its Spotify tab will say so.
-Where it *is* set up, it only ever gets `play_media` calls for Spotify
-content; it never touches grouping, volume, or anything else, and the
-two integrations are never asked to control the same thing at the same
-time — see [How it works](#how-it-works) for exactly which service call
+Where it *is* set up, it only ever gets playback commands — `play_media`
+for Spotify favorites, and transport (Next/Prev/Play/Pause/Stop) once
+it's confirmed to be the one actually playing. It never touches
+grouping or volume, and the two integrations are never asked to control
+the same thing at the same time — see [How it works](#how-it-works) for
+exactly which service call
 goes where.
 
 If you want to set Music Assistant up: it runs as a separate server
@@ -152,13 +154,21 @@ favorites:
   slider calls the standard `media_player.volume_set` — both native HEOS,
   always.
 - Playing a **radio** favorite calls `media_player.play_media` against the
-  focused group's HEOS leader, same as every other command here.
+  focused group's HEOS leader.
 - Playing a **Spotify** favorite calls `media_player.play_media` against
   that room's **`mass_entity`** instead — Music Assistant's own entity for
   the same physical speaker. The group itself stays exactly as native HEOS
   formed it; only the playback source is a different integration. A room
   with no `mass_entity` configured can't play Spotify favorites — it shows
   an error instead of silently doing nothing.
+- **Transport controls (Next/Prev/Play/Pause/Stop) target whichever
+  backend is actually driving the room** — the HEOS leader for radio, or
+  `mass_entity` once it's confirmed playing Spotify content. Found live:
+  relaying transport through the HEOS entity for Music Assistant content
+  behaves differently (worse) than talking to Music Assistant directly,
+  so once it's driving, everything about controlling *its* playback goes
+  straight to it. Grouping and volume never do this — they always target
+  the HEOS entity, regardless of what's playing.
 - Which rooms are currently grouped together is read directly from each
   room's `group_members` attribute — the card doesn't track grouping
   itself, so it stays in sync with grouping done from the HEOS app or
@@ -239,6 +249,31 @@ favorites:
   entity directly in Developer Tools.
 
 ## Changelog
+
+### 0.7.0 (beta-0.7.5)
+
+- **Fix: transport commands (Next/Prev/Play/Pause/Stop) now target
+  whichever backend is actually driving the room**, not always HEOS.
+  Found live: calling `media_next_track` directly on a Music
+  Assistant entity worked fine, but the same command relayed through
+  the HEOS entity (which is what the card always did) eventually hit
+  "Reached skip limit" — the HEOS→Music Assistant relay for transport
+  doesn't behave the same as talking to Music Assistant directly. So
+  when a room's `mass_entity` is the one actually playing, transport
+  now goes straight to it; radio (HEOS-driven) is unaffected. The
+  play/pause button's own status (playing vs. paused, which commands
+  are actually supported) now also reads from that same driving
+  entity, for the same reason.
+- **Grouping and all volume/mute (group and per-room) stay on the HEOS
+  entity unconditionally**, deliberately unchanged — Music Assistant has
+  no equivalent to controlling a whole physically HEOS-grouped set of
+  speakers, only its own single device, so there's no way to route
+  those through it consistently even if it seemed appealing to try.
+- Internal: introduced `_driveEntity()`, one shared answer to "which
+  entity actually owns this room's playback right now" used
+  consistently by transport, the play/pause button, the progress bar,
+  and the existing metadata/Up Next logic — replacing several
+  independent, slightly different versions of the same check.
 
 ### 0.7.0 (beta-0.7.4)
 

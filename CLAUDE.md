@@ -401,6 +401,48 @@ inte skriptad testning den här gången), alla fixade samma dag:**
   aldrig ogiltigförklaras mellan olika låtar — nycklas nu på
   `_metaAttributes()`s (riktiga) titel istället.
 
+**`beta-0.7.5` (2026-08-23) — två fynd till, det andra en verklig
+arkitekturändring gjord tillsammans med ägaren, inte bara en bugg:**
+
+- **Efter Stop kunde Play inte startas om på radio** —
+  `Entity ... does not support action media_player.media_play_pause`,
+  två gånger i loggen, vid ett Play-tryck (inte Pause). `0.7.3`s fix var
+  ofullständig: den löste bara fallet "spelar + ingen Pause-stöd → visa
+  Stop", men när entiteten går till `idle` efter ett Stop faller
+  huvudknappen tillbaka till `play_pause` igen (eftersom
+  `mainUsesStop`-villkoret kräver `isPlaying`) — och `media_play_pause`
+  failar tydligen OAVSETT riktning på en entitet utan `PAUSE`-stöd, inte
+  bara när den skulle resultera i en paus. Fixat: undvik
+  `media_play_pause` helt när `PAUSE` saknas — anropa `media_stop`
+  respektive `media_play` explicit istället, aldrig den kombinerade
+  tjänsten.
+- **`Reached skip limit` vid Next via kortet, men fungerade problemfritt
+  när ägaren körde `media_next_track` DIREKT mot MA-entiteten** (inte
+  via kortet). Det här motbevisar att det bara var en riktig
+  Spotify-kontogräns (som skulle gälla oavsett vilken entitet kommandot
+  går via) — pekar istället mot att HEOS→MA-relät för transportkommandon
+  beter sig annorlunda (sämre) än att prata med MA direkt, av okänd
+  anledning (fler underliggande anrop? omsynk räknas som skip? inte
+  utrett djupare). Ägarens beslut, efter diskussion: **när MA styr ett
+  rum ska ALLA transportkommandon gå direkt till MA**, inte reläas via
+  HEOS. Två uttryckliga avgränsningar bekräftade med ägaren (inte
+  antagna): (1) gruppering/join-unjoin stannar på HEOS oavsett — inget
+  MA-motsvarighet finns för att styra fysisk HEOS-gruppering; (2) all
+  volym (grupp + per-rum) och mute stannar på HEOS oavsett — MA har
+  ingen motsvarighet till att styra volymen för en hel fysiskt
+  HEOS-grupperad klunga högtalare, bara sin egen enhet.
+
+  Implementerat som en ny delad `_driveEntity(leaderEntity)` — returnerar
+  `mass_entity` om MA styr (samma villkor som `_massDrivingEntity()`,
+  som den nu bygger vidare på), annars HEOS-entiteten. Används nu
+  konsekvent av: `_onTransport()` (mål-entitet för Next/Prev/Play/Pause/
+  Stop), `_renderHero()`s `st`/`isPlaying`/`isPaused`/`features` (så att
+  Play/Pause-knappens utseende och vilka kommandon som visas som
+  tillgängliga också läses från rätt entitet — beslutat med ägaren,
+  inte antaget), `_tickProgress()`, och `_metaAttributes()` (nu bara en
+  tunn wrapper kring `_driveEntity()`). `_guardPending()`-nyckeln för
+  transport bytte från `focusedLeader` till den faktiska mål-entiteten.
+
 ## Screenshot
 
 `screenshots/overview.svg` är en schematisk illustration ritad från det
