@@ -133,6 +133,23 @@ HEOS-installation eftersom källkoden inte visar allt (t.ex. exakta
    ut. Felaktigt/tomt svar hanteras redan tyst (ingen toast, bara ingen
    rad visas), så en felaktig gissning här är kosmetisk, inte trasig
    funktionalitet.
+8. **Progress-baren (`0.6.1`, [#1](https://github.com/johro897/music-multiroom-card/issues/1)).**
+   HEOS stödjer inte seek (se punkt 6) — baren är alltid ren visning.
+   Obekräftat om HEOS faktiskt populerar `media_position`/
+   `media_duration`/`media_position_updated_at` för alla källor (radio
+   har typiskt ingen duration, vilket redan hanteras genom att baren
+   bara döljs) — provkör mot en riktig Spotify-låt/HEOS-favorit live för
+   att se att den faktiskt ritas och tickar rätt.
+
+**Ihågkom vid ändring av `_isDirty()`:** `media_position`/`media_duration`/
+`media_position_updated_at` läggs MEDVETET INTE till i den bevakade
+listan — de skulle trigga en full `_render()` varje gång HEOS tickar
+position under uppspelning (ofta var 1–5:e sekund), precis det `0.5.4`s
+optimering skulle undvika. Progress-baren tickas istället separat via
+`_tickProgress()` (satt igång i `_build()`, en `setInterval` som
+manipulerar `[data-progress-fill]`s `style.width` direkt i DOM:en, ingen
+full re-render). Verifierat med ett skriptat test: samma DOM-element
+före/efter en tick, `_render()`-räknaren ökar INTE.
 
 **Status efter 0.5.3 (bekräftat av ägaren 2026-08-23):** avgruppering av
 högtalare som ursprungligen grupperades via HEOS-appen fungerar nu, och

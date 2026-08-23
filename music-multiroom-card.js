@@ -346,6 +346,32 @@
       this.attachShadow({ mode: 'open' });
       this.shadowRoot.addEventListener('click', (e) => this._onClick(e));
       this.shadowRoot.addEventListener('change', (e) => this._onChange(e));
+      // Ticks the progress bar's width directly via DOM mutation, not a
+      // full _render() — media_position updates on a real playing track
+      // every few seconds, and _isDirty() deliberately does NOT watch it
+      // (see its own comment) to avoid rebuilding the whole card that
+      // often on a screen meant to stay on permanently.
+      this._progressInterval = setInterval(() => this._tickProgress(), 1000);
+    }
+
+    disconnectedCallback() {
+      clearInterval(this._progressInterval);
+    }
+
+    _tickProgress() {
+      const fill = this.shadowRoot?.querySelector('[data-progress-fill]');
+      if (!fill || !this._hass) return;
+      const groups = this._computeGroups();
+      const focusedLeader = this._resolveFocusedLeader(groups);
+      const st = focusedLeader ? this._hass.states[focusedLeader] : null;
+      if (st?.state !== 'playing') return;
+      const duration = st.attributes?.media_duration;
+      const position = st.attributes?.media_position;
+      const updatedAt = st.attributes?.media_position_updated_at;
+      if (typeof duration !== 'number' || duration <= 0 || typeof position !== 'number' || !updatedAt) return;
+      const elapsed = (Date.now() - new Date(updatedAt).getTime()) / 1000;
+      const current = Math.min(duration, Math.max(0, position + elapsed));
+      fill.style.width = `${(current / duration) * 100}%`;
     }
 
     // ---- group derivation ------------------------------------------------
@@ -725,6 +751,7 @@
       }
       const st = hass.states[focusedLeader];
       const isPlaying = st?.state === 'playing';
+      const isPaused = st?.state === 'paused';
       const title = st?.attributes?.media_title || t(hass, 'no_media');
       const artist = st?.attributes?.media_artist || '';
       const picture = st?.attributes?.entity_picture;
@@ -734,6 +761,23 @@
         (id) => this._config.rooms.find((r) => r.entity === id)?.name || id
       );
       const nextLabel = nextTrack ? [nextTrack.song, nextTrack.artist].filter(Boolean).join(' — ') : '';
+
+      // HEOS doesn't support seek at all (confirmed from source) — this is
+      // a display-only bar, never a scrubber. [UNVERIFIED] whether HEOS
+      // actually populates media_position/media_duration for every source
+      // (radio streams typically have no duration at all, in which case
+      // the bar is correctly just hidden below).
+      const duration = st?.attributes?.media_duration;
+      const position = st?.attributes?.media_position;
+      const updatedAt = st?.attributes?.media_position_updated_at;
+      const hasProgress =
+        (isPlaying || isPaused) && typeof duration === 'number' && duration > 0 && typeof position === 'number' && !!updatedAt;
+      let progressPct = 0;
+      if (hasProgress) {
+        const elapsed = isPlaying ? (Date.now() - new Date(updatedAt).getTime()) / 1000 : 0;
+        progressPct = (Math.min(duration, Math.max(0, position + elapsed)) / duration) * 100;
+      }
+
       return `
         <div class="hero" style="border-left-color:${focusedGroup.color};">
           <div class="hero-art">${picture ? `<img src="${escHtml(picture)}" alt="">` : iconNote()}</div>
@@ -765,6 +809,11 @@
                 : ''
             }
           </div>
+          ${
+            hasProgress
+              ? `<div class="hero-progress-track"><div class="hero-progress-fill" data-progress-fill style="width:${progressPct}%;"></div></div>`
+              : ''
+          }
         </div>`;
     }
 
@@ -937,8 +986,10 @@
         .hero {
           display:flex; align-items:center; gap:18px; background: var(--mmc-tile-bg);
           border-radius:14px; border-left:4px solid var(--mmc-accent); padding:16px 22px;
-          flex-shrink:0;
+          flex-shrink:0; position:relative; overflow:hidden;
         }
+        .hero-progress-track { position:absolute; left:0; right:0; bottom:0; height:3px; background: rgba(128,128,128,0.2); }
+        .hero-progress-fill { height:100%; background: var(--mmc-accent); }
         .hero-art {
           width:64px; height:64px; border-radius:10px; background: rgba(128,128,128,0.15);
           display:flex; align-items:center; justify-content:center; flex-shrink:0; overflow:hidden;

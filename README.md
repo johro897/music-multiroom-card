@@ -142,6 +142,18 @@ favorites:
 
 ## Changelog
 
+### 0.6.1
+
+- Add a thin, display-only progress bar along the bottom edge of the
+  Now Playing hero (HEOS doesn't support seeking, confirmed from source,
+  so it's never a scrubber). Reads `media_position`/`media_duration`/
+  `media_position_updated_at` and ticks forward once a second via a
+  direct DOM update — not a full re-render, matching the same
+  performance approach as the rest of the card. Hidden automatically for
+  sources with no duration (radio streams). This was accidentally marked
+  done in 0.6.0's release notes without actually being built — it's the
+  real implementation.
+
 ### 0.6.0
 
 - Add an "Up next" line to the Now Playing hero, shown while something's
