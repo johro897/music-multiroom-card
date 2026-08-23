@@ -75,6 +75,7 @@
       editor_browse_error: 'Could not load from this room. Is it online?',
       editor_browse_empty: 'Nothing found here.',
       editor_browse_back: 'Back',
+      editor_browse_open: 'Open',
       editor_add_selected: 'Add selected ({count})',
       editor_already_added: 'Already added',
       editor_no_rooms_configured: 'Add at least one room before browsing.',
@@ -136,6 +137,7 @@
       editor_browse_error: 'Kunde inte hämta från det här rummet. Är det online?',
       editor_browse_empty: 'Inget hittades här.',
       editor_browse_back: 'Tillbaka',
+      editor_browse_open: 'Öppna',
       editor_add_selected: 'Lägg till markerade ({count})',
       editor_already_added: 'Redan tillagd',
       editor_no_rooms_configured: 'Lägg till minst ett rum innan du bläddrar.',
@@ -1275,17 +1277,32 @@
         const items = current.items || [];
         const rows = items
           .map((item, i) => {
-            const isBrowsable = !!item.can_expand;
+            // A row can be browsable, playable-as-a-whole, or both at once
+            // — confirmed live against Music Assistant's browse_media tree
+            // (2026-08-23): a Spotify playlist is `can_expand: true` (its
+            // tracks) AND `can_play: true` (the playlist itself), unlike
+            // every HEOS item seen so far where the two were mutually
+            // exclusive. `can_play` defaults to true when the field is
+            // absent (HEOS's shape) so existing behavior is unchanged.
+            const canExpand = !!item.can_expand;
+            const canPlay = item.can_play !== false;
             const already = list.some((f) => f.media_content_id === item.media_content_id);
             const checked = selectedIds.has(item.media_content_id);
             return `
-              <div class="browse-row" data-action="${isBrowsable ? 'browse-drill' : 'toggle-select'}" data-idx="${i}" data-category="${category}">
+              <div class="browse-row">
                 ${
-                  isBrowsable
-                    ? `<span class="browse-folder-icon">${iconChevron()}</span>`
-                    : `<input type="checkbox" ${checked ? 'checked' : ''} ${already ? 'disabled' : ''} data-action="toggle-select" data-idx="${i}" data-category="${category}" />`
+                  canPlay
+                    ? `<input type="checkbox" ${checked ? 'checked' : ''} ${already ? 'disabled' : ''} data-action="toggle-select" data-idx="${i}" data-category="${category}" />`
+                    : `<span class="browse-checkbox-spacer"></span>`
                 }
-                <span class="browse-title">${escHtml(item.title || item.media_content_id || '')}</span>
+                <span class="browse-title" ${canExpand ? `data-action="browse-drill" data-idx="${i}" data-category="${category}"` : ''}>${escHtml(
+              item.title || item.media_content_id || ''
+            )}</span>
+                ${
+                  canExpand
+                    ? `<button class="browse-drill-btn" data-action="browse-drill" data-idx="${i}" data-category="${category}" aria-label="${escHtml(t(hass, 'editor_browse_open'))}"><span class="browse-folder-icon">${iconChevron()}</span></button>`
+                    : ''
+                }
                 ${already ? `<span class="browse-badge">${escHtml(t(hass, 'editor_already_added'))}</span>` : ''}
               </div>`;
           })
@@ -1520,7 +1537,10 @@
       const selected = isSpotify ? this._selectedSpotifyIds : this._selectedRadioIds;
       const current = browse.stack[browse.stack.length - 1];
       const items = current?.items || [];
-      const toAdd = items.filter((it) => selected.has(it.media_content_id) && !it.can_expand);
+      // A selected item may also be browsable (e.g. a Spotify playlist,
+      // can_expand AND can_play both true) — only exclude items that were
+      // never selectable in the first place (can_play === false).
+      const toAdd = items.filter((it) => selected.has(it.media_content_id) && it.can_play !== false);
       const target = this._config.favorites[category];
       for (const item of toAdd) {
         if (target.some((f) => f.media_content_id === item.media_content_id)) continue;
@@ -1573,10 +1593,15 @@
         .fav-source-title { font-size:14px; font-weight:600; }
         .fav-source-via { font-size:11.5px; color: var(--secondary-text-color); margin-bottom:10px; }
         .browse-list { max-height:260px; overflow-y:auto; display:flex; flex-direction:column; gap:4px; }
-        .browse-row { display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:pointer; min-height:40px; }
-        .browse-row:hover { background: rgba(128,128,128,.12); }
-        .browse-folder-icon { transform:rotate(-90deg); display:flex; }
+        .browse-row { display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; min-height:40px; }
+        .browse-row:hover { background: rgba(128,128,128,.08); }
+        .browse-checkbox-spacer { width:18px; flex-shrink:0; }
         .browse-title { flex-grow:1; font-size:13.5px; }
+        .browse-title[data-action] { cursor:pointer; }
+        .browse-title[data-action]:hover { text-decoration:underline; }
+        .browse-drill-btn { width:32px; height:32px; min-width:32px; border-radius:8px; border:none; background:transparent; color: var(--secondary-text-color); cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+        .browse-drill-btn:hover { background: rgba(128,128,128,.15); color: var(--primary-text-color); }
+        .browse-folder-icon { transform:rotate(-90deg); display:flex; }
         .browse-badge { font-size:11px; color: var(--secondary-text-color); }
         .link-btn { background:none; border:none; color: var(--primary-color); cursor:pointer; font-size:13px; padding:6px 0; margin-bottom:6px; }
       `;

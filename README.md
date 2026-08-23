@@ -182,6 +182,17 @@ favorites:
 
 ## Changelog
 
+### 0.7.0 (beta-0.7.1)
+
+- Fix, found live during `beta-0.7.0` testing: a Spotify **playlist**
+  couldn't be added as a favorite at all — the browse picker's row logic
+  assumed "browsable" (`can_expand`) and "selectable" were mutually
+  exclusive, which holds for everything seen from HEOS but not for Music
+  Assistant's tree, where a playlist row is `can_expand: true` (its
+  tracks) *and* `can_play: true` (the playlist itself) at the same time.
+  Every browse row now shows a checkbox and a drill-in control
+  independently, based on their own flags, instead of one or the other.
+
 ### 0.7.0
 
 - **Hybrid backend: real Spotify playback via Music Assistant, radio stays

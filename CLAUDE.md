@@ -194,9 +194,19 @@ HEOS-installation eftersom källkoden inte visar allt (t.ex. exakta
      anslutning) men INTE bekräftat — MA har även en egen separat "Sync
      Group Player"-provider (synlig i loggarna) som skulle kunna ha ett
      eget, icke-överlappande gruppbegrepp.
-   - Music Assistants `browse_media`-svarsform för Spotify-innehåll —
-     picker-koden återanvänder samma generiska breadcrumb-logik som redan
-     är liveverifierad mot HEOS, men själva MA-formen är obekräftad.
+   - ~~Music Assistants `browse_media`-svarsform för Spotify-innehåll~~
+     **DELVIS BEKRÄFTAT LIVE (2026-08-23):** till skillnad från allt som
+     observerats från HEOS, där ett objekt antingen är bläddringsbart
+     (`can_expand`) ELLER spelbart, är en Spotify-spellista i MA:s träd
+     BÅDA SAMTIDIGT — `can_expand: true` (dess låtar) OCH `can_play: true`
+     (spellistan i sin helhet). Ägaren kunde inte lägga till en spellista
+     alls med den ursprungliga bläddraren — den antog att `can_expand`
+     alltid uteslöt att raden var direkt valbar, så en spellista visade
+     bara pil-in-i-listan, aldrig en kryssruta. Fixat: varje rad visar nu
+     OBEROENDE en kryssruta (om `can_play !== false`) OCH en
+     bläddra-in-knapp (om `can_expand`), inte längre ett antingen/eller.
+     Fortfarande obekräftat: exakt trädform djupare än
+     Artists/Albums/Tracks/Playlists/Radio stations-roten.
 
 **Ihågkom vid ändring av `_isDirty()`:** `media_position`/`media_duration`/
 `media_position_updated_at` läggs MEDVETET INTE till i den bevakade
