@@ -128,16 +128,42 @@ favorites:
 ## Known limitations
 
 - **A single room playing solo doesn't yet appear as a "group of 1"** in
-  the Active Groups strip — under investigation.
-- No seek/progress bar, shuffle, repeat, or mute controls yet — HEOS
-  itself doesn't support seeking at all; the others are tracked as
-  [#1](https://github.com/johro897/music-multiroom-card/issues/1)/[#2](https://github.com/johro897/music-multiroom-card/issues/2).
+  the Active Groups strip — under investigation
+  ([#7](https://github.com/johro897/music-multiroom-card/issues/7)).
+- No seek/progress bar or shuffle/repeat controls yet — HEOS doesn't
+  support seeking at all; shuffle/repeat tracked as
+  [#1](https://github.com/johro897/music-multiroom-card/issues/1).
+- The "Up next" line's assumption about which queue position is "next"
+  isn't confirmed against a live queue yet — see CLAUDE.md.
 - `browse_media`'s exact tree depth for HEOS Favorites/TuneIn (how many
   levels down a playable station sits) isn't confirmed against a live
   system yet — the picker handles arbitrary depth generically, but hasn't
   been exercised against real data at every level.
 
 ## Changelog
+
+### 0.6.0
+
+- Add an "Up next" line to the Now Playing hero, shown while something's
+  playing — reads HEOS's `get_queue` service (confirmed to support
+  `return_response` from source). **Unverified**: assumes the queue's
+  second item is "next" (no explicit current-position flag in the data
+  to confirm this positionally) — needs live confirmation.
+- Add Mute and Stop controls, shown only when the focused room's
+  `supported_features` actually reports support for them (confirmed
+  bit values from HA core source) rather than assuming every HEOS player
+  has both.
+- Add `aria-label`s to every icon-only button (transport controls, the
+  per-room volume expand chevron, mute, editor row-remove buttons) —
+  previously only had a `title` tooltip, not reliably picked up by every
+  screen reader.
+- Add a `setConfig()` guard against the same `media_player` entity being
+  configured as two different rooms — throws a clear error instead of
+  silently producing two tiles that fight over one entity's state.
+- Fix: the dirty-check refinement from 0.5.4 didn't watch
+  `supported_features`/`is_volume_muted`, so an external mute toggle (or
+  the new Stop button's visibility) could go stale without another
+  watched attribute also changing. Added both to the watched list.
 
 ### 0.5.6
 

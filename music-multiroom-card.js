@@ -42,7 +42,12 @@
       play: 'Play',
       pause: 'Pause',
       next: 'Next',
+      stop: 'Stop',
+      mute: 'Mute',
+      unmute: 'Unmute',
+      up_next: 'Up next: {track}',
       rooms_required: '"rooms" must be a non-empty list of media_player entities',
+      rooms_duplicate: '"rooms" has the same media_player entity configured twice ({entity})',
       error_join: "Couldn't add the room to the group",
       error_unjoin: "Couldn't remove the room from the group",
       error_play: "Couldn't start playback",
@@ -93,7 +98,12 @@
       play: 'Spela',
       pause: 'Pausa',
       next: 'Nästa',
+      stop: 'Stoppa',
+      mute: 'Tysta',
+      unmute: 'Sätt på ljud',
+      up_next: 'Näst på tur: {track}',
       rooms_required: '"rooms" måste vara en icke-tom lista med media_player-entiteter',
+      rooms_duplicate: '"rooms" har samma media_player-entitet konfigurerad två gånger ({entity})',
       error_join: 'Kunde inte lägga till rummet i gruppen',
       error_unjoin: 'Kunde inte ta bort rummet från gruppen',
       error_play: 'Kunde inte starta uppspelning',
@@ -158,6 +168,13 @@
   // supply it. Everything else in this file uses HA CSS variables.
   const GROUP_COLORS = ['#03a9f4', '#ab47bc', '#66bb6a', '#ef5350', '#ffa726', '#26a69a'];
 
+  // media_player.MediaPlayerEntityFeature bit values, confirmed from HA
+  // core's homeassistant/components/media_player/const.py (2026-08-23) —
+  // used to only show Stop/Mute when the entity actually reports support
+  // for them, rather than assuming every HEOS player has both.
+  const FEATURE_VOLUME_MUTE = 8;
+  const FEATURE_STOP = 4096;
+
   function colorForLeader(entityId, rooms) {
     const idx = rooms.findIndex((r) => r.entity === entityId);
     return GROUP_COLORS[(idx < 0 ? 0 : idx) % GROUP_COLORS.length];
@@ -208,6 +225,15 @@
   function iconNote() {
     return '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>';
   }
+  function iconUpNext() {
+    return '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6v12M9 6l8 6-8 6z"/></svg>';
+  }
+  function iconStop() {
+    return '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>';
+  }
+  function iconVolumeMute() {
+    return '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9l5 6M21 9l-5 6"/></svg>';
+  }
   function iconTrash() {
     return '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>';
   }
@@ -225,11 +251,19 @@
       this._expandedRoomId = null;
       this._activeFavTab = 'spotify';
       this._pendingEntities = new Set();
+      this._nextTrackCache = { key: null, next: null };
     }
 
     setConfig(config) {
       if (!config || !Array.isArray(config.rooms) || config.rooms.length === 0) {
         throw new Error(`music-multiroom-card: ${t(this._hass, 'rooms_required')}`);
+      }
+      const seenEntities = new Set();
+      for (const r of config.rooms) {
+        if (r.entity && seenEntities.has(r.entity)) {
+          throw new Error(`music-multiroom-card: ${t(this._hass, 'rooms_duplicate', { entity: r.entity })}`);
+        }
+        seenEntities.add(r.entity);
       }
       this._config = {
         ...config,
@@ -298,6 +332,8 @@
           pa.media_artist !== na.media_artist ||
           pa.entity_picture !== na.entity_picture ||
           pa.volume_level !== na.volume_level ||
+          pa.is_volume_muted !== na.is_volume_muted ||
+          pa.supported_features !== na.supported_features ||
           !sameStringSet(pa.group_members, na.group_members)
         ) {
           return true;
@@ -405,6 +441,9 @@
           break;
         case 'transport':
           this._onTransport(el.dataset.cmd);
+          break;
+        case 'toggle-mute':
+          this._toggleMute(el.dataset.entity, el.dataset.muted === 'true');
           break;
         default:
           break;
@@ -534,10 +573,54 @@
       const groups = this._computeGroups();
       const focusedLeader = this._resolveFocusedLeader(groups);
       if (!focusedLeader || !this._hass) return;
-      const svc = cmd === 'play_pause' ? 'media_play_pause' : cmd === 'next' ? 'media_next_track' : 'media_previous_track';
+      const svc =
+        cmd === 'play_pause'
+          ? 'media_play_pause'
+          : cmd === 'next'
+          ? 'media_next_track'
+          : cmd === 'stop'
+          ? 'media_stop'
+          : 'media_previous_track';
       this._hass
         .callService('media_player', svc, {}, { entity_id: focusedLeader })
         .catch((err) => this._notifyError(t(this._hass, 'error_transport'), err));
+    }
+
+    _toggleMute(entity, currentlyMuted) {
+      if (!entity || !this._hass) return;
+      this._hass
+        .callService('media_player', 'volume_mute', { is_volume_muted: !currentlyMuted }, { entity_id: entity })
+        .catch((err) => this._notifyError(t(this._hass, 'error_volume'), err));
+    }
+
+    // Fetches what plays after the current track via heos.get_queue.
+    // [UNVERIFIED] assumes queue[0] is the currently playing item and
+    // queue[1] is next — pyheos's QueueItem carries no explicit
+    // current-position flag to confirm this from source alone, needs
+    // live confirmation against a real HEOS queue. Failures are swallowed
+    // quietly (no toast) since this is a display-only nicety, not a
+    // user-initiated action.
+    async _refreshNextTrack(focusedLeader, key) {
+      try {
+        const result = await this._hass.connection.sendMessagePromise({
+          type: 'call_service',
+          domain: 'heos',
+          service: 'get_queue',
+          service_data: {},
+          target: { entity_id: focusedLeader },
+          return_response: true,
+        });
+        const queue = result?.response?.[focusedLeader]?.queue || [];
+        const next = queue[1] || null;
+        if (this._nextTrackCache.key === key) {
+          this._nextTrackCache.next = next;
+          this._render();
+        }
+      } catch (err) {
+        if (this._nextTrackCache.key === key) {
+          this._nextTrackCache.next = null;
+        }
+      }
     }
 
     _setRoomVolume(entity, sliderValue) {
@@ -575,11 +658,20 @@
             }
           : null);
 
+      const leaderState = focusedLeader ? hass.states[focusedLeader] : null;
+      const isPlaying = leaderState?.state === 'playing';
+      const nextKey = isPlaying ? `${focusedLeader}|${leaderState?.attributes?.media_title || ''}` : null;
+      if (nextKey && nextKey !== this._nextTrackCache.key) {
+        this._nextTrackCache = { key: nextKey, next: null };
+        this._refreshNextTrack(focusedLeader, nextKey);
+      }
+      const nextTrack = nextKey && this._nextTrackCache.key === nextKey ? this._nextTrackCache.next : null;
+
       this.shadowRoot.innerHTML = `
         <style>${this._css()}</style>
         <div class="card">
           ${this._renderGroupsStrip(groups, focusedLeader)}
-          ${this._renderHero(focusedGroup, focusedLeader)}
+          ${this._renderHero(focusedGroup, focusedLeader, nextTrack)}
           <div class="section-label">${escHtml(t(hass, 'rooms'))}</div>
           ${this._renderRoomsGrid(groups, focusedLeader)}
           ${focusedLeader ? this._renderVolumeSection(focusedLeader) : ''}
@@ -618,7 +710,7 @@
         </div>`;
     }
 
-    _renderHero(focusedGroup, focusedLeader) {
+    _renderHero(focusedGroup, focusedLeader, nextTrack) {
       const hass = this._hass;
       if (!focusedGroup) {
         return `
@@ -636,9 +728,12 @@
       const title = st?.attributes?.media_title || t(hass, 'no_media');
       const artist = st?.attributes?.media_artist || '';
       const picture = st?.attributes?.entity_picture;
+      const features = st?.attributes?.supported_features || 0;
+      const canStop = !!(features & FEATURE_STOP);
       const names = focusedGroup.memberEntities.map(
         (id) => this._config.rooms.find((r) => r.entity === id)?.name || id
       );
+      const nextLabel = nextTrack ? [nextTrack.song, nextTrack.artist].filter(Boolean).join(' — ') : '';
       return `
         <div class="hero" style="border-left-color:${focusedGroup.color};">
           <div class="hero-art">${picture ? `<img src="${escHtml(picture)}" alt="">` : iconNote()}</div>
@@ -646,6 +741,11 @@
             <div class="hero-eyebrow">${escHtml(t(hass, 'now_playing'))}</div>
             <div class="hero-title">${escHtml(title)}</div>
             <div class="hero-subtitle">${escHtml(artist)}</div>
+            ${
+              isPlaying && nextLabel
+                ? `<div class="hero-nextup">${iconUpNext()}<span>${escHtml(t(hass, 'up_next', { track: nextLabel }))}</span></div>`
+                : ''
+            }
           </div>
           ${
             isPlaying
@@ -654,11 +754,16 @@
           }
           <div class="hero-spacer"></div>
           <div class="hero-transport">
-            <button class="tbtn" data-action="transport" data-cmd="prev" title="${escHtml(t(hass, 'previous'))}">${iconPrev()}</button>
-            <button class="tbtn tbtn-main" data-action="transport" data-cmd="play_pause" title="${escHtml(t(hass, isPlaying ? 'pause' : 'play'))}">${
+            <button class="tbtn" data-action="transport" data-cmd="prev" title="${escHtml(t(hass, 'previous'))}" aria-label="${escHtml(t(hass, 'previous'))}">${iconPrev()}</button>
+            <button class="tbtn tbtn-main" data-action="transport" data-cmd="play_pause" title="${escHtml(t(hass, isPlaying ? 'pause' : 'play'))}" aria-label="${escHtml(t(hass, isPlaying ? 'pause' : 'play'))}">${
         isPlaying ? iconPause() : iconPlay()
       }</button>
-            <button class="tbtn" data-action="transport" data-cmd="next" title="${escHtml(t(hass, 'next'))}">${iconNext()}</button>
+            <button class="tbtn" data-action="transport" data-cmd="next" title="${escHtml(t(hass, 'next'))}" aria-label="${escHtml(t(hass, 'next'))}">${iconNext()}</button>
+            ${
+              canStop
+                ? `<button class="tbtn" data-action="transport" data-cmd="stop" title="${escHtml(t(hass, 'stop'))}" aria-label="${escHtml(t(hass, 'stop'))}">${iconStop()}</button>`
+                : ''
+            }
           </div>
         </div>`;
     }
@@ -719,7 +824,7 @@
               <div class="tile-row tile-subrow">
                 <div class="tile-vol-label">${escHtml(t(hass, 'volume_pct', { value: volPct }))}</div>
                 <div class="tile-spacer"></div>
-                <button class="expand-btn" data-action="toggle-expand" data-entity="${escHtml(room.entity)}">
+                <button class="expand-btn" data-action="toggle-expand" data-entity="${escHtml(room.entity)}" aria-label="${escHtml(t(hass, 'volume_pct', { value: volPct }))}" aria-expanded="${expanded}">
                   <span style="display:flex;transform:rotate(${expanded ? 180 : 0}deg);transition:transform .15s;">${iconChevron()}</span>
                 </button>
               </div>
@@ -741,12 +846,20 @@
       const st = hass.states[focusedLeader];
       const vol = st?.attributes?.volume_level;
       const pct = typeof vol === 'number' ? Math.round(vol * 100) : 50;
+      const features = st?.attributes?.supported_features || 0;
+      const canMute = !!(features & FEATURE_VOLUME_MUTE);
+      const muted = !!st?.attributes?.is_volume_muted;
       return `
         <div class="volume-bar">
           <span class="volume-icon">${iconVolume()}</span>
           <div class="volume-label">${escHtml(t(hass, 'group_volume'))}</div>
           <input type="range" class="slider slider-flex" min="0" max="100" value="${pct}" data-action="group-volume" />
           <div class="volume-pct">${pct}%</div>
+          ${
+            canMute
+              ? `<button class="mute-btn ${muted ? 'mute-btn-active' : ''}" data-action="toggle-mute" data-entity="${escHtml(focusedLeader)}" data-muted="${muted}" title="${escHtml(t(hass, muted ? 'unmute' : 'mute'))}" aria-label="${escHtml(t(hass, muted ? 'unmute' : 'mute'))}" aria-pressed="${muted}">${iconVolumeMute()}</button>`
+              : ''
+          }
         </div>`;
     }
 
@@ -836,6 +949,8 @@
         .hero-eyebrow { font-size:11px; letter-spacing:.07em; text-transform:uppercase; color: var(--mmc-text-secondary); font-weight:600; }
         .hero-title { font-size:19px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:340px; }
         .hero-subtitle { font-size:13px; color: var(--mmc-text-secondary); }
+        .hero-nextup { display:flex; align-items:center; gap:5px; margin-top:2px; font-size:12px; color: var(--mmc-text-secondary); opacity:0.85; }
+        .hero-nextup svg { flex-shrink:0; opacity:0.8; }
         .hero-badge {
           display:flex; align-items:center; gap:6px; padding:5px 12px; border-radius:999px;
           background: color-mix(in srgb, var(--mmc-warn) 16%, transparent);
@@ -873,6 +988,8 @@
         .volume-pct { font-size:13px; color: var(--mmc-text-secondary); width:40px; text-align:right; flex-shrink:0; }
         .slider { accent-color: var(--mmc-accent); }
         .slider-flex { flex-grow:1; }
+        .mute-btn { width:40px; height:40px; min-width:40px; border-radius:10px; border:none; background: rgba(128,128,128,0.15); color: var(--primary-text-color); cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+        .mute-btn-active { background: color-mix(in srgb, var(--mmc-warn) 20%, transparent); color: var(--mmc-warn); }
 
         .favorites { display:flex; flex-direction:column; gap:10px; margin-top:auto; flex-shrink:0; }
         .fav-header { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
@@ -995,7 +1112,7 @@
             t(hass, 'editor_room_name')
           )}" value="${escHtml(room.name)}" />
           <ha-icon-picker class="field-icon" data-idx="${idx}" data-field="icon" data-target="rooms"></ha-icon-picker>
-          <button class="icon-btn" data-action="remove-room" data-idx="${idx}" title="${escHtml(t(hass, 'editor_remove'))}">${iconTrash()}</button>
+          <button class="icon-btn" data-action="remove-room" data-idx="${idx}" title="${escHtml(t(hass, 'editor_remove'))}" aria-label="${escHtml(t(hass, 'editor_remove'))}">${iconTrash()}</button>
         </div>`
         )
         .join('');
@@ -1014,7 +1131,7 @@
           <input class="field-text" type="text" data-idx="${idx}" data-field="media_content_id" data-target="spotify" placeholder="${escHtml(
             t(hass, 'editor_favorite_content_id')
           )}" value="${escHtml(fav.media_content_id)}" />
-          <button class="icon-btn" data-action="remove-spotify" data-idx="${idx}" title="${escHtml(t(hass, 'editor_remove'))}">${iconTrash()}</button>
+          <button class="icon-btn" data-action="remove-spotify" data-idx="${idx}" title="${escHtml(t(hass, 'editor_remove'))}" aria-label="${escHtml(t(hass, 'editor_remove'))}">${iconTrash()}</button>
         </div>`
         )
         .join('');
@@ -1079,7 +1196,7 @@
         <div class="row row-readonly">
           <div class="row-icon"><ha-icon icon="${escHtml(fav.icon || 'mdi:radio')}"></ha-icon></div>
           <div class="row-name">${escHtml(fav.name)}</div>
-          <button class="icon-btn" data-action="remove-radio" data-idx="${idx}" title="${escHtml(t(hass, 'editor_remove'))}">${iconTrash()}</button>
+          <button class="icon-btn" data-action="remove-radio" data-idx="${idx}" title="${escHtml(t(hass, 'editor_remove'))}" aria-label="${escHtml(t(hass, 'editor_remove'))}">${iconTrash()}</button>
         </div>`
         )
         .join('');

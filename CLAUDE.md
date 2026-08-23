@@ -120,6 +120,19 @@ HEOS-installation eftersom källkoden inte visar allt (t.ex. exakta
    starta uppspelning på enheter Spotifys API inte redan känner till) —
    det ursprungliga designvalet att bara luta sig mot HEOS egen Spotify
    Connect-hantering via sparade favoriter står fast.
+7. **`heos.get_queue`s svar — vilken position är "next"?** (`0.6.0`,
+   [#8](https://github.com/johro897/music-multiroom-card/issues/8))
+   Bekräftat via källkod: `get_queue` har `supports_response=ONLY` och
+   returnerar `{queue: [...]}` där varje objekt är en `pyheos.QueueItem`
+   (`song`/`artist`/`album`/`image_url`/`media_id`/`album_id`/`queue_id`).
+   **Obekräftat:** `_refreshNextTrack()` antar att `queue[0]` är den just
+   nu spelande låten och `queue[1]` är "next" — `QueueItem` saknar ett
+   explicit "is_current"-fält i källkoden för att bekräfta detta
+   positionellt. Om antagandet är fel visas fel låt (eller ingen) i
+   "Up next"-raden — provkör mot en riktig kö innan detta litas på fullt
+   ut. Felaktigt/tomt svar hanteras redan tyst (ingen toast, bara ingen
+   rad visas), så en felaktig gissning här är kosmetisk, inte trasig
+   funktionalitet.
 
 **Status efter 0.5.3 (bekräftat av ägaren 2026-08-23):** avgruppering av
 högtalare som ursprungligen grupperades via HEOS-appen fungerar nu, och
