@@ -443,6 +443,70 @@ arkitekturändring gjord tillsammans med ägaren, inte bara en bugg:**
   tunn wrapper kring `_driveEntity()`). `_guardPending()`-nyckeln för
   transport bytte från `focusedLeader` till den faktiska mål-entiteten.
 
+### Ev. förbättring — INTE implementerad: `_massDrivingEntity()`s tillförlitlighet
+
+**Status:** öppen fråga, ingen kod ändrad. Observerat live (2026-08-23)
+som sporadiska loggrader, inte ett trasigt användarflöde — uppspelning
+återhämtade sig själv ("sedan startade radion igen"). Låg allvarlighet,
+värt att lösa noga snarare än snabbt.
+
+**Det observerade felet:**
+```
+Error during service call to music_assistant.get_queue: No active queue found
+```
+Två gånger i rad, i ett rum där ägaren pausade och sedan spelade radio
+igen (HEOS, inte Spotify).
+
+**Rotorsak:** `_massDrivingEntity()` litar just nu enbart på
+`mass_entity`s EGEN `state`-attribut (`playing`/`paused` → "MA styr").
+Om det rummet tidigare spelat Spotify och sedan bytts till radio via
+HEOS, kan MA-entiteten bli kvarhängande i `paused`/`playing` utan att
+någonsin nollställas — inget tvingar MA att uppdatera sin egen status
+bara för att en ANNAN källa tog över den fysiska högtalaren via HEOS.
+Kortet trodde då felaktigt att MA styrde radio-rummet, vilket fick
+`_refreshNextTrack()` att fråga `music_assistant.get_queue` — som helt
+korrekt svarade att ingen aktiv kö fanns (MA spelar ju faktiskt
+ingenting). Troligen skulle samma kvarhängande status även ha felriktat
+transportkommandon (`_driveEntity()` bygger på samma metod) om ägaren
+tryckt Play/Pause i det ögonblicket — inte bekräftat, bara en logisk
+konsekvens av samma rotorsak.
+
+**Två idéer diskuterade, ingen vald än:**
+
+1. **Ägarens förslag: explicit lokal flagga per rum** (`_maActiveByRoom`,
+   en `Map` nycklad på rummets HEOS-entitet). Sätts deterministiskt i
+   `_onFavoriteTap()` exakt när en favorit trycks — Spotify-favorit →
+   `true`, Radio-favorit → `false` — istället för att gissas från
+   entitets-status. Löser den observerade buggen exakt (vi VET vad vi
+   just bad rummet göra). **Svaghet ägaren själv identifierade:** blind
+   för styrning från NÅGON ANNAN källa än kortet självt — Spotify-appen
+   direkt, HEOS-appen, en annan tablet med samma kort. Bryter mot samma
+   princip README redan är tydlig med för gruppering ("kortet håller sig
+   i synk med ändringar gjorda från HEOS-appen eller var som helst") —
+   en ren lokal flagga skulle INTE hålla sig i synk på samma sätt.
+2. **Alternativ: gate på HEOS egen `media_title === "Url Stream"`**
+   (bekräftad, DOKUMENTERAD konsekvens av att MA relärar ljud genom
+   HEOS — inte en godtycklig sträng, se MA:s egen dokumentation citerad
+   tidigare i den här filen: "metadata shows as URL stream due to HEOS
+   API constraints"), kombinerat med att MA-entiteten fortfarande
+   rapporterar `playing`/`paused`. Självkorrigerande oavsett VARIFRÅN
+   någon styr, eftersom den läser HEOS egen live-relästatus varje
+   rendering istället för att lita på något kortet själv kom ihåg.
+   **Svaghet:** beror på att strängen "Url Stream" förblir exakt vad
+   HEOS rapporterar — går sönder tyst (faller tillbaka till att aldrig
+   tro att MA styr) om HEOS/MA någon gång ändrar eller lokaliserar den
+   texten, utan att vi skulle märka det förrän någon rapporterar
+   symptomet igen.
+
+Ingen av idéerna är strikt bättre — ägarens flagga är robust mot att
+HEOS-texten ändras men blind för extern styrning; titel-gaten är
+självkorrigerande mot extern styrning men beroende av en observerad
+(inte formellt garanterad) sträng. En tredje, oprövad idé: kombinera
+båda — låt den lokala flaggan vara den STARKA signalen precis efter ett
+tryck i kortet, men låt den "förfalla"/omvärderas om HEOS egen titel
+sedan visar tydligt motsägande innehåll (en riktig kanalnamn istället
+för "Url Stream", eller vice versa) — inte utformad i detalj.
+
 ## Screenshot
 
 `screenshots/overview.svg` är en schematisk illustration ritad från det

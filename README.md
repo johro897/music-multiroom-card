@@ -247,6 +247,11 @@ favorites:
   instead whenever it's actively playing, but this is a real HEOS/Music
   Assistant limitation worth knowing about if you ever look at the HEOS
   entity directly in Developer Tools.
+- **Rarely, a room's `mass_entity` can be left reporting `playing`/
+  `paused` after you've switched that room back to radio**, which can
+  briefly cause a harmless `No active queue found` error in the log
+  (playback itself keeps working). Open design question, not yet fixed
+  — see CLAUDE.md for the two approaches under consideration.
 
 ## Changelog
 
