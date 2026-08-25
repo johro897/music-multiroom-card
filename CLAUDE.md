@@ -226,12 +226,12 @@ före/efter en tick, `_render()`-räknaren ökar INTE.
 **Status efter 0.5.3 (bekräftat av ägaren 2026-08-23):** avgruppering av
 högtalare som ursprungligen grupperades via HEOS-appen fungerar nu, och
 2-enheters-taket/`System error -9` är borta — båda var alltså sekundära
-symptom av join-buggen, inte egna buggar. **Fortfarande öppet:** en enda
-(icke-grupperad) högtalare som spelar solo visas inte som en "grupp om 1"
-i Active Groups-raden. Felsökning påbörjad men inte klar — nästa steg är
-att bekräfta om rums-plattan i "Rooms"-griden själv visar "Playing" för
-en sådan högtalare (skiljer på om `state === 'playing'`-detekteringen
-eller bara chip-renderingen är trasig); väntar på svar från ägaren.
+symptom av join-buggen, inte egna buggar. ~~Fortfarande öppet: en enda
+(icke-grupperad) högtalare som spelar solo visas inte som en "grupp om
+1" i Active Groups-raden~~ **STÄNGT (`beta-0.7.6`, issue #7): reproducerar
+inte.** Ett regressionstest bekräftar att en soloframträdande högtalare
+visas korrekt som sin egen chip med nuvarande kod — se
+"Kritisk helhetsgranskning"-sektionen längre ner för detaljer.
 
 Enligt paraply-CLAUDE.mds release-rutin är det första `beta-0.1.0`-taggen
 som är den faktiska verifieringsvägen för allt ovan — inte något som görs
@@ -506,6 +506,68 @@ båda — låt den lokala flaggan vara den STARKA signalen precis efter ett
 tryck i kortet, men låt den "förfalla"/omvärderas om HEOS egen titel
 sedan visar tydligt motsägande innehåll (en riktig kanalnamn istället
 för "Url Stream", eller vice versa) — inte utformad i detalj.
+
+## Kritisk helhetsgranskning, `beta-0.7.6` (2026-08-23)
+
+Ägaren bad om en genomgång av HELA filen "med nya ögon" — inte som svar
+på en specifik bugg, utan för att kortet hunnit byta riktning så många
+gånger (HEOS-only → hybrid HEOS+MA → transport-omdirigering) att risken
+för ackumulerad inkonsekvens kändes verklig. Hela filen (1765 rader) lästes
+om från grunden. **Slutsats: arkitekturen i sig behöver INTE göras om** —
+lagerindelningen (HEOS äger fysisk gruppering/volym eftersom MA saknar
+motsvarighet; MA äger Spotify-innehåll; `_driveEntity()` som enda
+skiljedomare) är sammanhållen och varje vändning drevs av ett bekräftat
+fynd, inte av gissningar. Konkreta fynd och fixar:
+
+1. **Verklig inkonsekvens-bugg, kvar efter `_driveEntity`-refaktoreringen.**
+   `_render()`s egen `isPlaying`/`nextKey`-beräkning läste fortfarande
+   `hass.states[focusedLeader]` direkt (rå HEOS-entitet) istället för via
+   `_driveEntity()`, medan `_renderHero()` redan räknade ut sin EGEN
+   `isPlaying` via `_driveEntity()` separat — exakt det mönster hela
+   refaktoreringen skulle eliminera, missat på ett ställe. Fixat: samma
+   `_driveEntity()`-uppslag som resten av rendern.
+2. **Självmotsägande kommentarer.** `_massDrivingEntity()`s dokumentation
+   påstod fortfarande "transport commands never consult this — they
+   always target the HEOS entity" — sant före `beta-0.7.5`, falskt sedan.
+   Metoden direkt efter (`_driveEntity`) beskrev korrekt det NYA
+   beteendet. Bara kommentartext ändrad, ingen funktionsändring.
+3. **`isSolo` — "grupp om 1" är nu ett explicit fält**, inte något varje
+   anropare måste räkna ut själv (`memberEntities.length < 2`) — den
+   omräkningen missades redan en gång (unjoin-på-ogrupperat-rum-buggen,
+   `beta-0.7.3`). `_onRoomTap()` uppdaterad att läsa `owning.isSolo`
+   istället för att omderivera.
+4. **Issue [#7](https://github.com/johro897/music-multiroom-card/issues/7)
+   utredd och STÄNGD — reproducerar inte.** Ägarens egen misstanke
+   ("jag tror också att det inte är ett problem längre") bekräftad: ett
+   nytt regressionstest visar att en soloframträdande/pausad rum redan
+   visas korrekt som sin egen chip i Active Groups-raden med befintlig
+   kod. Troligen läkt som en bieffekt av gruppering-relaterat arbete
+   sedan issuen skapades, aldrig omtestad förrän nu.
+5. **Editorns dubblerade bläddrings-state slogs ihop.** `_spotifyBrowse`/
+   `_radioBrowse` + `_selectedSpotifyIds`/`_selectedRadioIds` (fyra fält,
+   ~10 `isSpotify ? A : B`-förgreningar utspridda över filen) blev en enda
+   `this._browse = { spotify: {...}, radio: {...} }`, nycklad på samma
+   `category`-parameter alla dessa metoder redan tog emot. Ingen
+   beteendeändring, bara mindre upprepning och en risk mindre för att en
+   framtida tredje bläddringskategori glömmer det ena av två parallella
+   ställen.
+
+**Ny, incheckad testsvit — `test/music-multiroom-card.test.html`.** Hela
+sessionens verifiering hittills har varit engångs-scriptade tester i en
+scratch-mapp, aldrig sparade. Den här beta-omgången (`0.7.0`→`0.7.5`)
+hade flera regressioner där EN fix orsakade nästa bugg (paus-fixen
+missade idle-play-fallet, transport-omdirigeringen exponerade
+metadata-cache-buggen) — precis den sortens sak en stående svit fångar
+mekaniskt. 26 testfall, noll beroenden (matchar projektets no-build-chain-
+filosofi), körs genom att öppna filen i en webbläsare (eller servera
+repo-roten och öppna `/test/...`) — se `test/README.md`. Täcker allt som
+verifierats live eller skriptat hittills i det här projektet: favorit-
+routing, `_driveEntity`/vem-styr-logik, transport + dubbeltrycksskydd,
+Play/Pause-fallback, `isSolo`/Active-Groups-chipset (inklusive #7-testet
+ovan), gruppvolym-oavsett-källa, Up Next mot båda backends, HTML-escaping,
+och editorns bläddringsflöde. **Beslutat med ägaren:** ingen CI, inga npm-
+beroenden — körs manuellt inför en release, precis som de manuella
+`beta-X.Y.Z`-verifieringarna redan görs.
 
 ## Screenshot
 

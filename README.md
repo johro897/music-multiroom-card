@@ -36,8 +36,9 @@ for — Sonos, Bluesound, or any other platform.
   are instead browsed and played through **Music Assistant** — your real
   Spotify library and account, not HEOS's own limited Spotify handling.
   Both are picked visually in the editor, no IDs or names to type in by
-  hand. Grouping, volume, and transport all stay on native HEOS regardless
-  of which backend a favorite plays from.
+  hand. Grouping and volume always stay on native HEOS; transport
+  (Next/Prev/Play/Pause/Stop) follows whichever backend is actually
+  playing — see [Architecture](#architecture-two-integrations-on-purpose).
 - **Built-in GUI editor**, including the browse-and-pick flow — no YAML
   required to configure the card.
 - English/Swedish UI, theme-aware colors (dark and light Home Assistant
@@ -61,13 +62,16 @@ other "URL Stream" source as far as HEOS is concerned.
 
 So the card splits by what each integration is actually good at:
 
-- **Grouping, volume, transport, and Radio favorites** stay on the native
-  `heos` integration, unchanged from every earlier version of this card
-  — it's mature, already deeply tested (see the changelog below), and
-  there's no reason to route any of that through anything else.
-- **Spotify favorites**, and only Spotify favorites, are browsed and
-  played through **Music Assistant** instead — real playlists from your
-  real account, not HEOS's limited synced copy.
+- **Grouping, volume, and Radio favorites** stay on the native `heos`
+  integration always — it's mature, already deeply tested (see the
+  changelog below), and there's no reason to route any of that through
+  anything else.
+- **Spotify favorites** are browsed and played through **Music
+  Assistant** instead — real playlists from your real account, not
+  HEOS's limited synced copy. Once it's confirmed to be the one actually
+  playing a room, transport (Next/Prev/Play/Pause/Stop) follows it too —
+  relaying those through HEOS was tried first and found to behave
+  differently (worse) than talking to Music Assistant directly.
 
 Music Assistant is entirely **optional**. Skip it and the card works
 exactly like it always has, minus real Spotify playback — every room
@@ -174,6 +178,17 @@ favorites:
   itself, so it stays in sync with grouping done from the HEOS app or
   anywhere else.
 
+## Testing
+
+`test/music-multiroom-card.test.html` is a self-contained, zero-dependency
+test suite — open it directly in a browser (or serve the repo root and
+open `/test/music-multiroom-card.test.html`) to run it. Covers favorite
+routing, which backend is "driving" a room and how that's decided,
+transport routing and its double-tap guard, the Play/Pause button's
+fallback behavior, solo-room grouping, HTML-escaping, and the editor's
+browse flow — see `test/README.md`. Add a case here whenever a real bug
+is fixed; every existing case exists because something broke live first.
+
 ## Troubleshooting
 
 - **A room won't join a group.** Confirm the entity is actually a HEOS
@@ -223,9 +238,6 @@ favorites:
 
 ## Known limitations
 
-- **A single room playing solo doesn't yet appear as a "group of 1"** in
-  the Active Groups strip — under investigation
-  ([#7](https://github.com/johro897/music-multiroom-card/issues/7)).
 - No seek/progress bar or shuffle/repeat controls yet — HEOS doesn't
   support seeking at all; shuffle/repeat tracked as
   [#1](https://github.com/johro897/music-multiroom-card/issues/1).
@@ -254,6 +266,43 @@ favorites:
   — see CLAUDE.md for the two approaches under consideration.
 
 ## Changelog
+
+### 0.7.0 (beta-0.7.6)
+
+A full critical re-read of the entire file and its docs, requested by the
+owner given how many times the design had pivoted — not a response to a
+specific bug report. Findings and fixes:
+
+- Fix: `_render()`'s own "is something playing" check (gating whether to
+  refresh Up Next) still read the HEOS entity directly instead of
+  whichever entity is actually driving, while the hero itself had already
+  been fixed to use the driving entity — two independent answers to the
+  same question that could disagree. No live symptom confirmed, closed
+  the gap anyway.
+- Fix: a code comment on `_massDrivingEntity()` still claimed transport
+  never targets it, contradicting the method right below it — leftover
+  from before `beta-0.7.5`'s transport-routing change. Comment only, no
+  behavior change.
+- **"Group of 1" is now an explicit concept** (`isSolo` on each entry
+  `_computeGroups()` returns) instead of every caller re-deriving
+  `memberEntities.length < 2` itself — that re-derivation had already
+  been missed once (the unjoin-on-an-ungrouped-room bug fixed in
+  `beta-0.7.3`).
+- **Investigated [#7](https://github.com/johro897/music-multiroom-card/issues/7)
+  (solo room not appearing in the Active Groups strip) — closing it, not
+  reproducible.** A dedicated regression test confirms a solo
+  playing/paused room does appear as its own chip. Likely fixed as a
+  side effect of grouping work done since the issue was filed.
+- Editor: unified the parallel `_spotifyBrowse`/`_radioBrowse` and
+  `_selectedSpotifyIds`/`_selectedRadioIds` state into one `_browse` map
+  keyed by category, removing about ten repeated
+  `isSpotify ? A : B` call sites. No behavior change.
+- **Added a real, committed test suite** (`test/`) — every fix verified
+  live throughout this project's development so far was a scratch-folder
+  script written from zero each time; this project had accumulated
+  several regressions this beta round where one fix broke another
+  behavior, exactly the kind of thing a standing suite catches
+  mechanically instead of via live testing. See `test/README.md`.
 
 ### 0.7.0 (beta-0.7.5)
 

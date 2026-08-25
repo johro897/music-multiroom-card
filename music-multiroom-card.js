@@ -404,13 +404,14 @@
 
     // Single source of truth for "which backend actually owns this room's
     // current playback" — HEOS and Music Assistant behave differently
-    // enough (metadata, queue contents, pause support) that display logic
-    // needs one consistent answer instead of each place re-deriving its
-    // own heuristic. A room's mass_entity is considered "driving"
-    // whenever it's itself actively playing or paused; grouping, volume,
-    // and transport commands never consult this — they always target the
-    // HEOS entity regardless of who's driving. Returns the mass_entity id
-    // when MA is driving, otherwise null.
+    // enough (metadata, queue contents, pause support, transport
+    // reliability) that display and transport logic need one consistent
+    // answer instead of each place re-deriving its own heuristic. A
+    // room's mass_entity is considered "driving" whenever it's itself
+    // actively playing or paused. Returns the mass_entity id when MA is
+    // driving, otherwise null — see _driveEntity() for what actually
+    // consults this (transport and display; grouping/volume/mute do
+    // NOT, see _driveEntity's own comment for why).
     _massDrivingEntity(leaderEntity) {
       const room = this._config?.rooms.find((r) => r.entity === leaderEntity);
       if (!room?.mass_entity) return null;
@@ -471,6 +472,18 @@
           id: leaderEntity,
           leaderEntity,
           memberEntities: members,
+          // True when this "group" is really just one room playing or
+          // paused solo — HEOS itself never actually joined it (no real
+          // media_player.join ever happened, group_members is just the
+          // room's own entity reflected back). Kept in the same groups
+          // array so rendering treats every active room uniformly, but
+          // exposed explicitly so callers that need to know "is this a
+          // REAL HEOS group" (e.g. before calling unjoin on it) read a
+          // named field instead of re-deriving memberEntities.length < 2
+          // themselves — that re-derivation was missed once already (the
+          // "unjoin on a room HEOS never grouped" bug fixed in
+          // beta-0.7.3, see CLAUDE.md).
+          isSolo: members.length < 2,
           color: colorForLeader(leaderEntity, rooms),
         });
       }
@@ -595,7 +608,7 @@
         // there's nothing to unjoin. Calling `unjoin` on it anyway fails
         // live with "Entity ... is not joined to a group" (found
         // 2026-08-23) — tapping it again should just clear focus.
-        if (owning.memberEntities.length < 2) {
+        if (owning.isSolo) {
           this._focusedGroupId = null;
           this._render();
           return;
@@ -822,7 +835,14 @@
             }
           : null);
 
-      const leaderState = focusedLeader ? hass.states[focusedLeader] : null;
+      // Reads the driving entity's own state, not always the HEOS
+      // entity's — found on a fresh audit (2026-08-23) that this had been
+      // left reading focusedLeader directly while _renderHero computed
+      // its own isPlaying via _driveEntity, two independent answers to
+      // the same question that could disagree (e.g. if HEOS momentarily
+      // lags a source handoff). No live symptom confirmed from this one,
+      // just closing the gap _driveEntity was introduced to close.
+      const leaderState = focusedLeader ? hass.states[this._driveEntity(focusedLeader)] : null;
       const isPlaying = leaderState?.state === 'playing';
       // Keyed off _metaAttributes' title, not the HEOS entity's own
       // media_title directly — for Music Assistant content the HEOS
@@ -1243,14 +1263,15 @@
       super();
       this._hass = null;
       this._config = { rooms: [], favorites: { spotify: [], radio: [] } };
-      // Two fully independent browse sessions now — Spotify browses a
-      // room's `mass_entity` (Music Assistant), Radio browses its `entity`
-      // (HEOS) — they used to share one state object with a category
-      // toggle, which no longer fits now that they hit different backends.
-      this._spotifyBrowse = { room: null, stack: [], loading: false, error: null };
-      this._radioBrowse = { room: null, stack: [], loading: false, error: null };
-      this._selectedSpotifyIds = new Set();
-      this._selectedRadioIds = new Set();
+      // Two fully independent browse sessions, one per category — Spotify
+      // browses a room's `mass_entity` (Music Assistant), Radio browses
+      // its `entity` (HEOS). Kept as one Map keyed by category (not two
+      // parallel sets of fields) so every call site takes `category` as
+      // a parameter instead of a repeated `isSpotify ? A : B` ternary.
+      this._browse = {
+        spotify: { room: null, stack: [], loading: false, error: null, selected: new Set() },
+        radio: { room: null, stack: [], loading: false, error: null, selected: new Set() },
+      };
     }
 
     setConfig(config) {
@@ -1366,8 +1387,8 @@
       const rooms = isSpotify
         ? this._config.rooms.filter((r) => r.entity && r.mass_entity)
         : this._config.rooms.filter((r) => r.entity);
-      const browse = isSpotify ? this._spotifyBrowse : this._radioBrowse;
-      const selectedIds = isSpotify ? this._selectedSpotifyIds : this._selectedRadioIds;
+      const browse = this._browse[category];
+      const selectedIds = browse.selected;
       const list = this._config.favorites[category];
 
       const favRow = (fav, idx) => `
@@ -1526,13 +1547,10 @@
         return;
       }
       if (el.matches('select.browse-room-select')) {
-        const category = el.dataset.category;
-        const isSpotify = category === 'spotify';
-        const browse = isSpotify ? this._spotifyBrowse : this._radioBrowse;
-        const selected = isSpotify ? this._selectedSpotifyIds : this._selectedRadioIds;
+        const browse = this._browse[el.dataset.category];
         browse.room = el.value;
         browse.stack = [];
-        selected.clear();
+        browse.selected.clear();
         this._render();
       }
     }
@@ -1571,20 +1589,19 @@
           this._drillBrowse(category, idx);
           break;
         case 'browse-back': {
-          const browse = category === 'spotify' ? this._spotifyBrowse : this._radioBrowse;
-          (category === 'spotify' ? this._selectedSpotifyIds : this._selectedRadioIds).clear();
+          const browse = this._browse[category];
+          browse.selected.clear();
           browse.stack.pop();
           this._render();
           break;
         }
         case 'toggle-select': {
-          const browse = category === 'spotify' ? this._spotifyBrowse : this._radioBrowse;
-          const selected = category === 'spotify' ? this._selectedSpotifyIds : this._selectedRadioIds;
+          const browse = this._browse[category];
           const current = browse.stack[browse.stack.length - 1];
           const item = current?.items?.[idx];
           if (item) {
-            if (selected.has(item.media_content_id)) selected.delete(item.media_content_id);
-            else selected.add(item.media_content_id);
+            if (browse.selected.has(item.media_content_id)) browse.selected.delete(item.media_content_id);
+            else browse.selected.add(item.media_content_id);
           }
           this._render();
           break;
@@ -1619,7 +1636,7 @@
 
     async _startBrowse(category) {
       const isSpotify = category === 'spotify';
-      const browse = isSpotify ? this._spotifyBrowse : this._radioBrowse;
+      const browse = this._browse[category];
       const rooms = isSpotify
         ? this._config.rooms.filter((r) => r.entity && r.mass_entity)
         : this._config.rooms.filter((r) => r.entity);
@@ -1655,15 +1672,13 @@
     }
 
     async _drillBrowse(category, idx) {
-      const isSpotify = category === 'spotify';
-      const browse = isSpotify ? this._spotifyBrowse : this._radioBrowse;
-      const selected = isSpotify ? this._selectedSpotifyIds : this._selectedRadioIds;
+      const browse = this._browse[category];
       const current = browse.stack[browse.stack.length - 1];
       const item = current?.items?.[idx];
       const targetEntity = this._browseTargetEntity(category, browse.room);
       if (!item || !targetEntity || !this._hass) return;
       browse.loading = true;
-      selected.clear();
+      browse.selected.clear();
       this._render();
       try {
         browse.stack.push(await this._fetchBrowseNode(targetEntity, item));
@@ -1677,14 +1692,13 @@
 
     _addSelectedFavorites(category) {
       const isSpotify = category === 'spotify';
-      const browse = isSpotify ? this._spotifyBrowse : this._radioBrowse;
-      const selected = isSpotify ? this._selectedSpotifyIds : this._selectedRadioIds;
+      const browse = this._browse[category];
       const current = browse.stack[browse.stack.length - 1];
       const items = current?.items || [];
       // A selected item may also be browsable (e.g. a Spotify playlist,
       // can_expand AND can_play both true) — only exclude items that were
       // never selectable in the first place (can_play === false).
-      const toAdd = items.filter((it) => selected.has(it.media_content_id) && it.can_play !== false);
+      const toAdd = items.filter((it) => browse.selected.has(it.media_content_id) && it.can_play !== false);
       const target = this._config.favorites[category];
       for (const item of toAdd) {
         if (target.some((f) => f.media_content_id === item.media_content_id)) continue;
@@ -1695,7 +1709,7 @@
           media_content_id: item.media_content_id,
         });
       }
-      selected.clear();
+      browse.selected.clear();
       this._render();
       this._fireConfigChanged();
     }
