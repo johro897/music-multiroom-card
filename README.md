@@ -249,10 +249,13 @@ is fixed; every existing case exists because something broke live first.
   levels down a playable station sits) isn't confirmed against a live
   system yet — the picker handles arbitrary depth generically, but hasn't
   been exercised against real data at every level.
-- **Music Assistant's `browse_media` shape for Spotify content** isn't
-  confirmed against a live Music Assistant entity yet — the picker reuses
-  the same generic tree-walking logic as HEOS's, but the HEOS side is the
-  one that's actually been exercised live so far.
+- **Music Assistant's `browse_media` shape is confirmed live** for its
+  root (Artists/Albums/Tracks/Playlists/Radio stations/Podcasts) and one
+  level into Playlists (where a playlist is both browsable *and*
+  directly playable, unlike anything HEOS returns) — deeper levels, and
+  the Radio stations/Podcasts branches specifically, haven't been
+  exercised live yet. The picker's tree-walking logic is generic either
+  way, so this is a "hasn't been tried," not a known problem.
 - **Music Assistant reports generic "Url Stream" metadata on the HEOS
   entity itself** for anything it plays — the card now reads display
   metadata (title/artist/art/position) from a room's `mass_entity`
@@ -267,178 +270,104 @@ is fixed; every existing case exists because something broke live first.
 
 ## Changelog
 
-### 0.7.0 (beta-0.7.6)
+### 0.7.0 — Real Spotify playback via Music Assistant
 
-A full critical re-read of the entire file and its docs, requested by the
-owner given how many times the design had pivoted — not a response to a
-specific bug report. Findings and fixes:
+**Hybrid backend.** Each room gets a new optional `mass_entity` field —
+that room's [Music Assistant](https://www.music-assistant.io/) counterpart
+for the same physical speaker. Spotify favorites now browse and play
+through Music Assistant, a real Spotify account and library, instead of
+HEOS's own limited Spotify handling; grouping, volume, and radio
+favorites stay completely on native HEOS. A room without `mass_entity`
+configured simply can't play Spotify favorites — a clear hint in the UI
+and an error toast on tap, never a silent failure. See
+[Architecture](#architecture-two-integrations-on-purpose) for the full
+reasoning and exactly which command goes where.
 
-- Fix: `_render()`'s own "is something playing" check (gating whether to
-  refresh Up Next) still read the HEOS entity directly instead of
-  whichever entity is actually driving, while the hero itself had already
-  been fixed to use the driving entity — two independent answers to the
-  same question that could disagree. No live symptom confirmed, closed
-  the gap anyway.
-- Fix: a code comment on `_massDrivingEntity()` still claimed transport
-  never targets it, contradicting the method right below it — leftover
-  from before `beta-0.7.5`'s transport-routing change. Comment only, no
-  behavior change.
-- **"Group of 1" is now an explicit concept** (`isSolo` on each entry
-  `_computeGroups()` returns) instead of every caller re-deriving
-  `memberEntities.length < 2` itself — that re-derivation had already
-  been missed once (the unjoin-on-an-ungrouped-room bug fixed in
-  `beta-0.7.3`).
-- **Investigated [#7](https://github.com/johro897/music-multiroom-card/issues/7)
-  (solo room not appearing in the Active Groups strip) — closing it, not
-  reproducible.** A dedicated regression test confirms a solo
-  playing/paused room does appear as its own chip. Likely fixed as a
-  side effect of grouping work done since the issue was filed.
-- Editor: unified the parallel `_spotifyBrowse`/`_radioBrowse` and
-  `_selectedSpotifyIds`/`_selectedRadioIds` state into one `_browse` map
-  keyed by category, removing about ten repeated
-  `isSpotify ? A : B` call sites. No behavior change.
-- **Added a real, committed test suite** (`test/`) — every fix verified
-  live throughout this project's development so far was a scratch-folder
-  script written from zero each time; this project had accumulated
-  several regressions this beta round where one fix broke another
-  behavior, exactly the kind of thing a standing suite catches
-  mechanically instead of via live testing. See `test/README.md`.
+**Root cause this solves:** HEOS's own "Spotify" source only ever exposes
+what's already synced into HEOS's own library — never live playback from
+the actual linked account, confirmed via extensive live testing (this is
+also why manual Spotify favorite entry was removed back in `0.6.3`; that
+fix addressed the symptom, not the actual limitation). Music Assistant's
+Spotify provider decodes the real account's audio directly and hands
+HEOS a plain stream to play.
 
-### 0.7.0 (beta-0.7.5)
+**What real-world testing surfaced and fixed, in the order it was found:**
 
-- **Fix: transport commands (Next/Prev/Play/Pause/Stop) now target
-  whichever backend is actually driving the room**, not always HEOS.
-  Found live: calling `media_next_track` directly on a Music
-  Assistant entity worked fine, but the same command relayed through
-  the HEOS entity (which is what the card always did) eventually hit
-  "Reached skip limit" — the HEOS→Music Assistant relay for transport
-  doesn't behave the same as talking to Music Assistant directly. So
-  when a room's `mass_entity` is the one actually playing, transport
-  now goes straight to it; radio (HEOS-driven) is unaffected. The
-  play/pause button's own status (playing vs. paused, which commands
-  are actually supported) now also reads from that same driving
-  entity, for the same reason.
-- **Grouping and all volume/mute (group and per-room) stay on the HEOS
-  entity unconditionally**, deliberately unchanged — Music Assistant has
-  no equivalent to controlling a whole physically HEOS-grouped set of
-  speakers, only its own single device, so there's no way to route
-  those through it consistently even if it seemed appealing to try.
-- Internal: introduced `_driveEntity()`, one shared answer to "which
-  entity actually owns this room's playback right now" used
-  consistently by transport, the play/pause button, the progress bar,
-  and the existing metadata/Up Next logic — replacing several
-  independent, slightly different versions of the same check.
+- A Spotify **playlist** couldn't be added as a favorite at all — the
+  browse picker assumed "browsable" and "selectable" were mutually
+  exclusive (true for everything seen from HEOS), but a Music Assistant
+  playlist row is both at once (`can_expand` for its tracks, `can_play`
+  for the playlist itself). Every browse row now shows a checkbox and a
+  drill-in control independently.
+- The Now Playing hero showed the literal text "Url Stream" as title
+  *and* artist, with no progress bar — HEOS reports exactly that generic
+  placeholder for anything Music Assistant hands it to play (a real
+  HEOS/Music Assistant limitation, not a bug in either). Display fields
+  now come from a room's `mass_entity` instead, whenever it's the one
+  actually playing *or paused* (pausing flips its state too, and the
+  first version of this fix only checked for "playing").
+- The Spotify browse picker opened on Music Assistant's root menu
+  (Artists/Albums/Tracks/Playlists/Radio stations/Podcasts) instead of
+  anything useful for picking favorites — it now jumps straight into
+  "Playlists", with the root still one "Back" away.
+- **Confirmed live**: grouping several rooms via the card (native HEOS)
+  and playing a Spotify favorite plays across the whole group, not just
+  the leader — the biggest open design question going in.
+- Radio playback couldn't be paused, and after Stop, Play couldn't
+  restart either — HEOS radio streams only support Stop, never Pause
+  (confirmed live), and Home Assistant rejects the combined
+  `media_play_pause` service outright on an entity that doesn't declare
+  Pause support, *regardless of which direction it would resolve to*.
+  Transport now calls the direct, unambiguous service (`media_play` or
+  `media_stop`) whenever Pause isn't supported, instead of the combined
+  one.
+- Tapping a solo playing/paused room's own tile could throw `Entity ...
+  is not joined to a group` — a room playing by itself counts as its own
+  "group of 1" for focus purposes, but HEOS itself never actually
+  grouped it, so calling `unjoin` on it failed. Tapping it now just
+  clears focus, no service call. "Group of 1" is now an explicit
+  `isSolo` field on every group the card computes, instead of every
+  caller re-deriving it — this exact re-derivation had already been
+  missed once, which is how the bug above happened.
+- "Up next" showed "Url Stream — Url Stream" for Spotify content — same
+  root cause as the metadata fix, but for HEOS's own queue. It now asks
+  whichever backend actually owns the room's playback: Music Assistant's
+  own `music_assistant.get_queue` action (a real `next_item` field, no
+  positional guessing) when it's driving, HEOS's `heos.get_queue`
+  unchanged otherwise.
+- A touchscreen double-firing a single tap into two click events could
+  send a transport command twice with no protection — every other
+  interactive control in this card already guarded against that,
+  transport hadn't. Plausible (not confirmed as the sole cause)
+  explanation for an oddly-fast "Spotify skip limit reached" error seen
+  live after what felt like one tap.
+- **Transport commands (Next/Prev/Play/Pause/Stop) now target whichever
+  backend is actually driving the room, not always HEOS.** Confirmed
+  live: calling `media_next_track` directly on the Music Assistant
+  entity worked fine, but the same command relayed through the HEOS
+  entity (what the card always did before this) eventually hit "Reached
+  skip limit" — disproving a pure Spotify account-level limit, since
+  that would apply regardless of which entity issued the command, and
+  pointing at the HEOS→Music Assistant relay itself. Grouping and all
+  volume/mute stay on the HEOS entity unconditionally either way — Music
+  Assistant has no equivalent to controlling a whole physically
+  HEOS-grouped set of speakers, only its own device. One shared
+  `_driveEntity()` check now answers "who's actually driving this room"
+  consistently everywhere that needs to know: transport, the play/pause
+  button's own status, the progress bar, and the metadata/Up Next logic
+  above.
 
-### 0.7.0 (beta-0.7.4)
-
-- Fix: "Up next" showed "Url Stream — Url Stream" for Spotify content.
-  It was reading HEOS's own queue, which — same as its title/artist —
-  is meaningless for anything Music Assistant is driving. It now asks
-  whichever backend actually owns the room's playback: Music
-  Assistant's own `music_assistant.get_queue` action (a real `next_item`
-  field, no guessing) when Music Assistant is driving, HEOS's
-  `heos.get_queue` unchanged otherwise. Also fixed a related cache bug
-  this surfaced: the "next track" cache was keyed on HEOS's own title,
-  which never changes for Spotify content, so it would go stale after
-  the first track of a session.
-- Fix: a touchscreen double-firing a single tap into two click events
-  could send a transport command (Next/Prev/Play/Pause/Stop) twice with
-  no protection — every other interactive control in this card already
-  guards against that, transport just never had it. Likely explanation
-  for an oddly-quick "Spotify skip limit reached" error seen live after
-  what felt like a single tap.
-- Internal: introduced one shared `_massDrivingEntity()` check for
-  "is Music Assistant or HEOS actually driving this room's playback
-  right now" — both the metadata fix and this Up Next fix now use it,
-  instead of each re-deriving its own version of the same check.
-
-### 0.7.0 (beta-0.7.3)
-
-Three fixes found live during real-world beta use (not scripted testing this
-time — actual daily use surfaced these):
-
-- Fix: radio playback couldn't be paused — some sources (confirmed live:
-  HEOS radio streams) don't support pause at all, only stop, and HA
-  rejects `media_play_pause` outright on an entity that doesn't support
-  it (`does not support action media_player.media_play_pause` in the
-  log). The main transport button now falls back to acting as Stop when
-  pause isn't supported, instead of failing silently-from-the-UI's
-  perspective — no separate Stop button is shown in that case, since the
-  main button already covers it.
-- Fix: pausing Spotify content reverted the Now Playing title/artist to
-  HEOS's generic "Url Stream" placeholder. The `0.7.2` metadata fix only
-  preferred the `mass_entity`'s attributes while it was `playing` —
-  pausing flips it to `paused` too, and the check needed to allow both.
-- Fix: tapping a solo playing/paused room's own tile could throw `Entity
-  ... is not joined to a group` in the log. A room playing by itself
-  counts as its own "group of 1" internally for focus purposes, but HEOS
-  itself never actually grouped it — so the tap handler was calling
-  `unjoin` on an entity HEOS didn't consider joined at all. Tapping it
-  now just clears focus instead, no service call. (Related to, but not
-  the same bug as, [#7](https://github.com/johro897/music-multiroom-card/issues/7)'s
-  display issue — both stem from solo rooms being a card-side-only
-  "group of 1" concept.)
-
-### 0.7.0 (beta-0.7.2)
-
-- **Confirmed live**: grouping four rooms via the card (native HEOS) and
-  playing a Spotify favorite plays across the whole group, not just the
-  leader — the biggest open question from `0.7.0`'s design is resolved.
-- Fix: the Now Playing hero showed the literal text "Url Stream" as both
-  title and artist for Spotify content, with no progress bar — HEOS
-  reports exactly that generic placeholder for anything Music Assistant
-  hands it to play (a real HEOS/MA limitation, not a bug in either). The
-  card now reads title/artist/artwork/position from a room's
-  `mass_entity` instead, whenever it's the one actually playing.
-- Fix: the Spotify browse picker opened on Music Assistant's root menu
-  (Artists/Albums/Tracks/Playlists/Radio stations/Podcasts) — nobody
-  wants to pick a favorite from "Artists" on a multiroom dashboard. It
-  now jumps straight into "Playlists", with the root still one "Back"
-  away if that's not what you wanted this time.
-
-### 0.7.0 (beta-0.7.1)
-
-- Fix, found live during `beta-0.7.0` testing: a Spotify **playlist**
-  couldn't be added as a favorite at all — the browse picker's row logic
-  assumed "browsable" (`can_expand`) and "selectable" were mutually
-  exclusive, which holds for everything seen from HEOS but not for Music
-  Assistant's tree, where a playlist row is `can_expand: true` (its
-  tracks) *and* `can_play: true` (the playlist itself) at the same time.
-  Every browse row now shows a checkbox and a drill-in control
-  independently, based on their own flags, instead of one or the other.
-
-### 0.7.0
-
-- **Hybrid backend: real Spotify playback via Music Assistant, radio stays
-  on native HEOS.** Each room gets a new optional `mass_entity` field
-  (that room's Music Assistant counterpart for the same physical
-  speaker). Spotify favorites now browse and play through Music Assistant
-  — a real Spotify account and library, not HEOS's own limited Spotify
-  handling — while grouping, volume, transport, and radio favorites are
-  completely unchanged, still 100% native HEOS. A room without
-  `mass_entity` configured simply can't play Spotify favorites (clear
-  hint in the UI, error toast on tap, no silent failure).
-- The editor's Favorites section is now two separate blocks instead of
-  one shared browse-and-toggle flow — Spotify (browsed from a room's
-  `mass_entity`) and Radio (browsed from a room's `entity`, exactly as
-  before) — since they now genuinely hit two different backends rather
-  than being two tags on the same HEOS browse tree.
-- Root cause of why HEOS's own Spotify handling could never work for
-  this: browsing into HEOS's "Spotify" source only ever exposes what's
-  already synced into HEOS's own library, never live playback from the
-  actual linked Spotify account — confirmed via extensive live testing.
-  Music Assistant's Spotify provider decodes the real account's audio
-  directly (confirmed via its own `player_support`/output-protocol
-  behavior showing as a generic "URL stream" on the HEOS device, not a
-  HEOS-native Spotify session) and hands it to HEOS as a plain stream.
-- Verified with a scripted test: Spotify favorite tap on a room with
-  `mass_entity` routes to that entity; on a room without it, no service
-  call fires and an error toast shows instead; radio favorite tap is
-  unchanged; the editor's two browse sections independently resolve to
-  the correct target entity and add to the correct favorites list.
-- **Not yet confirmed live**: whether playback started on a `mass_entity`
-  actually plays across a HEOS group formed via the native integration —
-  see Known limitations.
+**A full critical re-read of the whole file**, requested by the owner
+given how many times the design had pivoted through the above — not a
+response to a specific bug. Verdict: the architecture didn't need a
+redo, each pivot was driven by a confirmed live finding, not guesswork.
+Found and fixed two remaining small consistency gaps left by the
+incremental fixes above (one real, one a stale code comment); confirmed
+[#7](https://github.com/johro897/music-multiroom-card/issues/7) (solo
+room not appearing in the Active Groups strip) no longer reproduces, via
+a dedicated regression test; and added `test/`, a real committed,
+zero-dependency test suite covering everything above — every fix until
+now was verified with a scratch script written from scratch each time.
 
 ### 0.6.3
 
