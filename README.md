@@ -271,11 +271,13 @@ is fixed; every existing case exists because something broke live first.
 
 ## Changelog
 
-### 0.7.2
+### 0.7.6
 
-(Version `0.7.1` is skipped — that tag name was already used by one of
-`0.7.0`'s six beta rounds, `beta-0.7.1`, and beta tags are never
-deleted, so reusing it here would collide.)
+(Versions `0.7.1` through `0.7.5` are skipped — those tag names were
+already used by `0.7.0`'s own six beta rounds, `beta-0.7.0` through
+`beta-0.7.5`, and beta tags are never deleted, so reusing any of them
+here would collide. `0.7.6` is simply the first free number, not six
+patches' worth of changes.)
 
 - Fix: the Now Playing hero was essentially unusable on a phone-width
   screen — fixed-width album art, transport buttons, and the "Playing
