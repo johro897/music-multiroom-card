@@ -831,20 +831,37 @@
       // Group" regardless of what's actually playing (e.g. after a page
       // reload while music is already going). If nothing has focused
       // anything yet in this card instance and exactly one group is
-      // active, focus it automatically instead of defaulting to "New
-      // Group". Runs only once per instance — _focusAutoResolved is set
-      // true right after, so a deliberate later "New Group" tap (which
-      // also leaves _focusedGroupId null) always sticks and never gets
-      // silently re-overridden. Reported live 2026-08-25: focus with two
-      // simultaneous groups playing isn't resolved by this (ambiguous —
-      // deliberately left as "New Group" until #2, remembering the last
-      // explicit choice across reloads, is decided; that needs
-      // localStorage, a deliberate exception to this project's stated
-      // no-localStorage policy, not done here).
+      // genuinely playing/paused, focus it automatically instead of
+      // defaulting to "New Group". Runs only once per instance —
+      // _focusAutoResolved is set true right after, so a deliberate later
+      // "New Group" tap (which also leaves _focusedGroupId null) always
+      // sticks and never gets silently re-overridden.
+      //
+      // Deliberately filters to groups.isActive's PLAYBACK half only
+      // (state playing/paused), not membership alone — _computeGroups()
+      // also marks a room "active" purely for having 2+ group_members,
+      // even while genuinely idle (a HEOS grouping can outlive playback).
+      // The first version of this fix used raw groups.length and broke
+      // live 2026-08-25: an idle-but-still-grouped pair of rooms sat
+      // alongside one genuinely playing solo room, groups.length was 2,
+      // and the heuristic gave up as "ambiguous" even though only one
+      // group was actually playing anything.
+      //
+      // Two or more groups GENUINELY playing/paused at once is still left
+      // on "New Group" — actually ambiguous, no way to know which one you
+      // care about. Remembering the last explicit choice across reloads
+      // would need localStorage, a deliberate exception to this project's
+      // stated no-localStorage policy, not done here.
       if (!this._focusAutoResolved) {
         this._focusAutoResolved = true;
-        if (!this._focusedGroupId && groups.length === 1) {
-          this._focusedGroupId = groups[0].leaderEntity;
+        if (!this._focusedGroupId) {
+          const playingGroups = groups.filter((g) => {
+            const st = hass.states[this._driveEntity(g.leaderEntity)];
+            return st?.state === 'playing' || st?.state === 'paused';
+          });
+          if (playingGroups.length === 1) {
+            this._focusedGroupId = playingGroups[0].leaderEntity;
+          }
         }
       }
 

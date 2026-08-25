@@ -432,6 +432,30 @@
     assertEqual(card._focusedGroupId, null, 'a later explicit New Group state must not be silently re-focused');
   });
 
+  test('Cold start with one idle-but-still-grouped pair alongside one genuinely playing solo room auto-focuses the playing one (regression: reported live 2026-08-25, an idle leftover group made groups.length > 1 and blocked auto-focus)', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [
+        { entity: 'media_player.heos_hallen', name: 'Hallen' },
+        { entity: 'media_player.heos_kok', name: 'Köket' },
+        { entity: 'media_player.heos_mollys', name: "Mollys rum" },
+      ],
+      favorites: { spotify: [], radio: [] },
+    });
+    const idleGroupMembers = ['media_player.heos_hallen', 'media_player.heos_kok'];
+    card.hass = fakeHass({
+      states: {
+        'media_player.heos_hallen': { state: 'idle', attributes: { group_members: idleGroupMembers } },
+        'media_player.heos_kok': { state: 'idle', attributes: { group_members: idleGroupMembers } },
+        'media_player.heos_mollys': { state: 'playing', attributes: { group_members: ['media_player.heos_mollys'] } },
+      },
+    }).hass;
+    const groups = card._computeGroups();
+    assertEqual(groups.length, 2, 'sanity check: the idle grouped pair still counts as its own active group entry');
+    assertEqual(card._focusedGroupId, 'media_player.heos_mollys');
+  });
+
   // ---------------------------------------------------------------------
   // Card: volume/mute always stay on the HEOS entity
   // ---------------------------------------------------------------------

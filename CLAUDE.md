@@ -569,6 +569,40 @@ och editorns bläddringsflöde. **Beslutat med ägaren:** ingen CI, inga npm-
 beroenden — körs manuellt inför en release, precis som de manuella
 `beta-X.Y.Z`-verifieringarna redan görs.
 
+## Fokus-fix mot "New Group", `1.0.0` (issue #11)
+
+Rapporterat live 2026-08-25: fokus hamnade alltid på "New Group" vid
+sidladdning/flikbyte i HA, trots att en grupp faktiskt spelade —
+`_focusedGroupId` är ren in-memory-state, nollställs vid varje omritning
+av kortet. Fix: vid kortets FÖRSTA rendering, om inget uttryckligt fokus
+satts än och exakt en grupp spelar/är pausad, fokusera den automatiskt.
+Körs bara en gång per kort-instans (`_focusAutoResolved`-flagga) så ett
+senare avsiktligt tryck på "New Group" aldrig blir automatiskt
+överskrivet igen.
+
+**beta-1.0.0-uppföljning, samma dag:** ägaren testade rätt (F5 med musik
+redan igång) men fixen fungerade ändå inte. Grävde vidare tillsammans —
+orsaken var att `_computeGroups()`s `isActive`-villkor räknar ett rum som
+"aktivt" antingen om det spelar/är pausat, ELLER bara för att det har 2+
+`group_members` — en HEOS-gruppering kan alltså leva kvar länge efter att
+uppspelningen stannat. Ägarens riktiga setup hade ett kvarlämnat,
+overksamt par ihopgrupperade rum SAMTIDIGT som ett enda rum genuint
+spelade solo — `groups.length` blev då 2 (inte 1), och den första
+fix-versionen (som räknade råa `groups.length`) gav upp som "tvetydigt"
+trots att bara en grupp faktiskt spelade något. Fixad genom att filtrera
+till grupper där uppspelning FAKTISKT sker (`state === 'playing' ||
+'paused'` på den drivande entiteten) innan count-kollen, inte bara
+"är grupperad". Ny regressionstest tillagd (30/30 totalt) som exakt
+återskapar scenariot: ett idle-men-grupperat par + ett genuint spelande
+soloRum.
+
+Committad direkt på `main` båda gångerna (feature-branch-steget
+uttryckligen överhoppat av ägaren för den här ändringen specifikt — inte
+en generell policyändring). `beta-1.0.0`-taggen fick en uppföljande
+`beta-1.0.1` istället för en ny minor-version, enligt den befintliga
+regeln för "liten uppföljningsfix upptäckt UNDER test av en redan
+publicerad beta" (se root-CLAUDE.md, "Release-rutin").
+
 ## Screenshot
 
 Löst (2026-08-25, del av 1.0.0-förberedelserna) — `screenshots/overview.svg`

@@ -284,14 +284,22 @@ is fixed; every existing case exists because something broke live first.
   playing — because `_focusedGroupId` is purely in-memory UI state, reset
   to `null` on every card (re)construction with no smart default. On the
   first render after a (re)build, if nothing has been explicitly focused
-  yet in that card instance and exactly one group is active, it's now
-  focused automatically instead. Fires only once per card instance, so a
-  later deliberate "New Group" tap always sticks. If two or more groups
-  are playing simultaneously at cold start it's left on "New Group" —
-  genuinely ambiguous which one to pick, and remembering the last
-  explicit choice across reloads would need `localStorage`, a deliberate
-  exception to this project's no-localStorage policy not made here.
+  yet in that card instance and exactly one group is genuinely
+  playing/paused, it's now focused automatically instead. Fires only once
+  per card instance, so a later deliberate "New Group" tap always sticks.
+  If two or more groups are genuinely playing/paused simultaneously at
+  cold start it's left on "New Group" — actually ambiguous which one to
+  pick, and remembering the last explicit choice across reloads would
+  need `localStorage`, a deliberate exception to this project's
+  no-localStorage policy not made here.
   ([#11](https://github.com/johro897/music-multiroom-card/issues/11))
+  **beta-1.0.0 follow-up:** the first version of this fix checked raw
+  group *count*, not playback state — a room left grouped with another
+  from earlier but currently idle still counts as its own "active" group
+  entry (HEOS grouping can outlive playback), so one idle leftover group
+  alongside one genuinely playing solo room made the count 2 and blocked
+  auto-focus even though only one thing was actually playing. Now filters
+  to groups where playback is actually happening before counting.
 - Docs: replaced the schematic `overview.svg` placeholder with four real
   screenshots from a live HA instance (overview, two simultaneous
   groups, mobile layout, the config editor).
