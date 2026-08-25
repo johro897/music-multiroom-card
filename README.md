@@ -238,9 +238,10 @@ is fixed; every existing case exists because something broke live first.
 
 ## Known limitations
 
-- No seek/progress bar or shuffle/repeat controls yet — HEOS doesn't
-  support seeking at all; shuffle/repeat tracked as
-  [#1](https://github.com/johro897/music-multiroom-card/issues/1).
+- No seek — a permanent limitation, not an unimplemented feature: HEOS
+  doesn't support it at all, confirmed from source (the progress bar
+  itself is implemented, display-only). No shuffle/repeat controls
+  either; not currently planned, no open issue tracking it.
 - The "Up next" line's HEOS/radio path still assumes the queue's second
   position is "next" — isn't confirmed against a live HEOS queue yet
   (the Spotify/Music Assistant path uses an explicit `next_item` field

@@ -675,13 +675,13 @@
       this._render();
     }
 
-    // Radio favorites always target the focused group's HEOS leader, same
-    // as every other command in this card. Spotify favorites target that
-    // room's `mass_entity` instead — the group itself is still 100% native
-    // HEOS; only the playback source differs. [UNVERIFIED] whether
-    // play_media against the MA entity actually fans out across a group
-    // formed via the native integration's `media_player.join` — needs
-    // confirming live (see CLAUDE.md).
+    // Radio favorites always target the focused group's HEOS leader.
+    // Spotify favorites target that room's `mass_entity` instead — the
+    // group itself is still 100% native HEOS; only the playback source
+    // differs. Confirmed live (see CLAUDE.md, beta-0.7.2): play_media
+    // against the mass_entity does fan out across a group formed via the
+    // native integration's `media_player.join`, same as any other
+    // command routed to Music Assistant since (see _driveEntity).
     _onFavoriteTap(mediaContentType, mediaContentId, source) {
       const groups = this._computeGroups();
       const focusedLeader = this._resolveFocusedLeader(groups);
