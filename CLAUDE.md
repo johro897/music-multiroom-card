@@ -603,6 +603,9 @@ en generell policyändring). `beta-1.0.0`-taggen fick en uppföljande
 regeln för "liten uppföljningsfix upptäckt UNDER test av en redan
 publicerad beta" (se root-CLAUDE.md, "Release-rutin").
 
+**Bekräftat live av ägaren 2026-08-25** efter `beta-1.0.1`: fungerar nu.
+Skarp `1.0.0` taggad och släppt samma dag.
+
 ## Screenshot
 
 Löst (2026-08-25, del av 1.0.0-förberedelserna) — `screenshots/overview.svg`
