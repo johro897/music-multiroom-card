@@ -378,6 +378,61 @@
   });
 
   // ---------------------------------------------------------------------
+  // Card: cold-start focus (regression: used to always default to "New
+  // Group" even while exactly one group was already playing, reported
+  // live 2026-08-25)
+  // ---------------------------------------------------------------------
+  test('Cold start with exactly one group already playing auto-focuses it instead of defaulting to New Group', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_hallen', name: 'Hallen' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    card.hass = fakeHass({
+      states: { 'media_player.heos_hallen': { state: 'playing', attributes: { group_members: ['media_player.heos_hallen'] } } },
+    }).hass;
+    assertEqual(card._focusedGroupId, 'media_player.heos_hallen');
+    const newGroupChip = card.shadowRoot.querySelector('.groups-strip .chip-new');
+    assertTrue(newGroupChip && !newGroupChip.classList.contains('active'), 'expected New Group chip to not be the active one');
+  });
+
+  test('Cold start with two groups playing leaves focus on New Group (ambiguous, not auto-resolved)', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [
+        { entity: 'media_player.heos_hallen', name: 'Hallen' },
+        { entity: 'media_player.heos_kok', name: 'Köket' },
+      ],
+      favorites: { spotify: [], radio: [] },
+    });
+    card.hass = fakeHass({
+      states: {
+        'media_player.heos_hallen': { state: 'playing', attributes: { group_members: ['media_player.heos_hallen'] } },
+        'media_player.heos_kok': { state: 'playing', attributes: { group_members: ['media_player.heos_kok'] } },
+      },
+    }).hass;
+    assertEqual(card._focusedGroupId, null);
+  });
+
+  test('Auto-focus only fires once: an explicit "New Group" tap after cold start sticks and is not re-overridden on the next render', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_hallen', name: 'Hallen' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    card.hass = fakeHass({
+      states: { 'media_player.heos_hallen': { state: 'playing', attributes: { group_members: ['media_player.heos_hallen'] } } },
+    }).hass;
+    assertEqual(card._focusedGroupId, 'media_player.heos_hallen');
+    card._focusedGroupId = null;
+    card._render();
+    assertEqual(card._focusedGroupId, null, 'a later explicit New Group state must not be silently re-focused');
+  });
+
+  // ---------------------------------------------------------------------
   // Card: volume/mute always stay on the HEOS entity
   // ---------------------------------------------------------------------
   test('Group volume always targets the HEOS entity, even while Music Assistant is driving', async () => {

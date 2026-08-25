@@ -261,6 +261,7 @@
       this._hass = null;
       this._built = false;
       this._focusedGroupId = null;
+      this._focusAutoResolved = false;
       this._expandedRoomId = null;
       this._activeFavTab = 'spotify';
       this._pendingEntities = new Set();
@@ -824,6 +825,29 @@
       if (!this._hass || !this._config) return;
       const hass = this._hass;
       const groups = this._computeGroups();
+
+      // One-time cold-start heuristic: a freshly (re)built card always
+      // starts with _focusedGroupId === null, which renders as "New
+      // Group" regardless of what's actually playing (e.g. after a page
+      // reload while music is already going). If nothing has focused
+      // anything yet in this card instance and exactly one group is
+      // active, focus it automatically instead of defaulting to "New
+      // Group". Runs only once per instance — _focusAutoResolved is set
+      // true right after, so a deliberate later "New Group" tap (which
+      // also leaves _focusedGroupId null) always sticks and never gets
+      // silently re-overridden. Reported live 2026-08-25: focus with two
+      // simultaneous groups playing isn't resolved by this (ambiguous —
+      // deliberately left as "New Group" until #2, remembering the last
+      // explicit choice across reloads, is decided; that needs
+      // localStorage, a deliberate exception to this project's stated
+      // no-localStorage policy, not done here).
+      if (!this._focusAutoResolved) {
+        this._focusAutoResolved = true;
+        if (!this._focusedGroupId && groups.length === 1) {
+          this._focusedGroupId = groups[0].leaderEntity;
+        }
+      }
+
       const focusedLeader = this._resolveFocusedLeader(groups);
       const focusedGroup =
         groups.find((g) => g.leaderEntity === focusedLeader) ||

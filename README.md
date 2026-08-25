@@ -9,12 +9,7 @@ why. It uses HA's generic `media_player` join/unjoin/`play_media`
 services, but is not tested against — and makes no compatibility claim
 for — Sonos, Bluesound, or any other platform.
 
-![Music Multiroom Card overview](screenshots/overview.svg)
-
-> The image above is a schematic preview drawn from the card's approved
-> design, not a live screenshot yet — see the note in this repo's
-> `CLAUDE.md` about swapping it for a real one once the card has been
-> verified against a live HEOS system.
+![Music Multiroom Card overview](screenshots/overview.png)
 
 ---
 
@@ -24,6 +19,8 @@ for — Sonos, Bluesound, or any other platform.
   something on them while a completely different group plays something
   else — an "Active Groups" strip lets you switch which group's controls
   (now playing, volume, favorites) you're looking at.
+
+  ![Active Groups strip with two simultaneous groups](screenshots/groupchips.png)
 - **Tap rooms to group them.** Tap an idle room to start a new group or add
   it to the currently focused one; tap a room already in the focused group
   to remove it.
@@ -45,6 +42,11 @@ for — Sonos, Bluesound, or any other platform.
   themes both work — only the group-identity color coding is a fixed
   palette, since it needs to visually distinguish arbitrary simultaneous
   groups from each other).
+- **Responsive down to phone width.** Designed primarily for a wall-mounted
+  tablet in Panel mode, but the Now Playing hero also reflows cleanly on a
+  narrow phone screen (since `0.7.6`).
+
+  <img src="screenshots/mobile.png" alt="Music Multiroom Card on a phone-width screen" width="360">
 
 ## Architecture: two integrations, on purpose
 
@@ -116,7 +118,11 @@ For a dedicated tablet dashboard, put this card alone on a view set to
 The card has no visible options other than what you configure through its
 GUI editor: your rooms (which `media_player` entities are groupable) and
 your Spotify/Radio favorites, both populated by browsing rather than
-typed by hand. The equivalent YAML shape (for reference — you won't
+typed by hand.
+
+![Card configuration editor, with a live preview](screenshots/config.png)
+
+The equivalent YAML shape (for reference — you won't
 normally write `favorites` entries yourself, since `media_content_id`
 values are opaque HEOS-internal identifiers the browse picker captures
 for you, not something you'd type):
@@ -270,6 +276,26 @@ is fixed; every existing case exists because something broke live first.
   — see CLAUDE.md for the two approaches under consideration.
 
 ## Changelog
+
+### 1.0.0
+
+- Fix: the Now Playing hero always defaulted to "New Group" on load —
+  including right after a page reload while a group was already actively
+  playing — because `_focusedGroupId` is purely in-memory UI state, reset
+  to `null` on every card (re)construction with no smart default. On the
+  first render after a (re)build, if nothing has been explicitly focused
+  yet in that card instance and exactly one group is active, it's now
+  focused automatically instead. Fires only once per card instance, so a
+  later deliberate "New Group" tap always sticks. If two or more groups
+  are playing simultaneously at cold start it's left on "New Group" —
+  genuinely ambiguous which one to pick, and remembering the last
+  explicit choice across reloads would need `localStorage`, a deliberate
+  exception to this project's no-localStorage policy not made here.
+  ([#11](https://github.com/johro897/music-multiroom-card/issues/11))
+- Docs: replaced the schematic `overview.svg` placeholder with four real
+  screenshots from a live HA instance (overview, two simultaneous
+  groups, mobile layout, the config editor).
+  ([#5](https://github.com/johro897/music-multiroom-card/issues/5))
 
 ### 0.7.6
 

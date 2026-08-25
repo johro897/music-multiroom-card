@@ -571,12 +571,14 @@ beroenden — körs manuellt inför en release, precis som de manuella
 
 ## Screenshot
 
-`screenshots/overview.svg` är en schematisk illustration ritad från det
-godkända designunderlaget, INTE en riktig skärmdump. Byt ut den mot en
-riktig skärmdump (helst PNG) från en verklig HA-instans innan skarp
-release — HACS plugin-validering kräver bara att READMEn innehåller EN
-bild (vilket redan är uppfyllt), men en påhittad illustration är inte
-representativt nog för en riktig release.
+Löst (2026-08-25, del av 1.0.0-förberedelserna) — `screenshots/overview.svg`
+(schematisk illustration ritad från designunderlaget) ersattes med fyra
+riktiga skärmdumpar från en verklig HA-instans: `overview.png` (hero-bilden
+överst i README), `groupchips.png` (Active Groups-stripen med två samtidiga
+grupper), `mobile.png` (den `0.7.6`-mobilfixen bekräftad på en riktig
+telefon), `config.png` (GUI-editorn med live-preview). Löser
+[#5](https://github.com/johro897/music-multiroom-card/issues/5). Den gamla
+`overview.svg` togs bort ur repot.
 
 ## Kända gotchas
 
