@@ -34,6 +34,7 @@
       no_group_focused: 'No Group Focused',
       no_media: 'Nothing playing',
       favorites_disabled_hint: 'Focus a group to play favorites',
+      favorites_no_mass_hint: 'This room has no Music Assistant entity configured',
       favorites_ready_hint: 'Ready to play',
       no_favorites: 'No favorites configured yet — add some in the card editor.',
       locked_other_group: 'Playing in another group',
@@ -53,24 +54,32 @@
       error_play: "Couldn't start playback",
       error_volume: "Couldn't change the volume",
       error_transport: "Couldn't control playback",
+      error_no_mass_entity: "This room isn't connected to Music Assistant — add a Music Assistant entity for it in the card editor to play Spotify here.",
       editor_rooms: 'Rooms',
       editor_add_room: 'Add room',
       editor_room_entity: 'Media player entity',
       editor_room_name: 'Display name',
       editor_room_icon: 'Icon',
+      editor_room_mass_entity: 'Music Assistant entity (optional)',
+      editor_room_mass_entity_hint: 'Enables real Spotify playback for this room. Leave empty if this room has no Music Assistant counterpart.',
       editor_remove: 'Remove',
       editor_favorites: 'Favorites',
-      editor_favorites_hint: 'Only things already starred as a Favorite in the HEOS app can be added here — including your own Spotify playlists (browse into "Spotify") and radio stations (browse into "TuneIn" or "Favorites"). No searching or typing names.',
+      editor_favorites_spotify_title: 'Spotify',
+      editor_favorites_spotify_via: 'via Music Assistant — your real Spotify library, not HEOS’s',
+      editor_favorites_radio_title: 'Radio',
+      editor_favorites_radio_via: 'via HEOS — unchanged',
       editor_browse_from_room: 'Browse from room',
-      editor_browse_button: 'Browse HEOS',
+      editor_browse_button_spotify: 'Browse Spotify',
+      editor_browse_button_radio: 'Browse HEOS',
       editor_browse_loading: 'Loading…',
       editor_browse_error: 'Could not load from this room. Is it online?',
       editor_browse_empty: 'Nothing found here.',
       editor_browse_back: 'Back',
-      editor_add_to: 'Add to',
+      editor_browse_open: 'Open',
       editor_add_selected: 'Add selected ({count})',
       editor_already_added: 'Already added',
       editor_no_rooms_configured: 'Add at least one room before browsing.',
+      editor_no_mass_rooms: 'No rooms have a Music Assistant entity configured yet — add one above to browse Spotify.',
     },
     sv: {
       now_playing: 'Nu spelas',
@@ -87,6 +96,7 @@
       no_group_focused: 'Ingen grupp fokuserad',
       no_media: 'Inget spelas',
       favorites_disabled_hint: 'Fokusera en grupp för att spela favoriter',
+      favorites_no_mass_hint: 'Det här rummet har ingen Music Assistant-entitet konfigurerad',
       favorites_ready_hint: 'Redo att spela',
       no_favorites: 'Inga favoriter konfigurerade än — lägg till i kortets editor.',
       locked_other_group: 'Spelar i en annan grupp',
@@ -106,24 +116,32 @@
       error_play: 'Kunde inte starta uppspelning',
       error_volume: 'Kunde inte ändra volymen',
       error_transport: 'Kunde inte styra uppspelningen',
+      error_no_mass_entity: 'Det här rummet är inte kopplat till Music Assistant — lägg till en Music Assistant-entitet för det i kortets editor för att spela Spotify här.',
       editor_rooms: 'Rum',
       editor_add_room: 'Lägg till rum',
       editor_room_entity: 'Media player-entitet',
       editor_room_name: 'Visningsnamn',
       editor_room_icon: 'Ikon',
+      editor_room_mass_entity: 'Music Assistant-entitet (valfri)',
+      editor_room_mass_entity_hint: 'Möjliggör riktig Spotify-uppspelning för rummet. Lämna tomt om rummet saknar en Music Assistant-motsvarighet.',
       editor_remove: 'Ta bort',
       editor_favorites: 'Favoriter',
-      editor_favorites_hint: 'Bara sådant som redan är stjärnmärkt som Favorit i HEOS-appen går att lägga till här — inklusive dina egna Spotify-spellistor (bläddra in i "Spotify") och radiokanaler (bläddra in i "TuneIn" eller "Favorites"). Ingen sökning eller manuell inmatning.',
+      editor_favorites_spotify_title: 'Spotify',
+      editor_favorites_spotify_via: 'via Music Assistant — ditt riktiga Spotify-bibliotek, inte HEOS eget',
+      editor_favorites_radio_title: 'Radio',
+      editor_favorites_radio_via: 'via HEOS — oförändrat',
       editor_browse_from_room: 'Bläddra från rum',
-      editor_browse_button: 'Bläddra HEOS',
+      editor_browse_button_spotify: 'Bläddra Spotify',
+      editor_browse_button_radio: 'Bläddra HEOS',
       editor_browse_loading: 'Laddar…',
       editor_browse_error: 'Kunde inte hämta från det här rummet. Är det online?',
       editor_browse_empty: 'Inget hittades här.',
       editor_browse_back: 'Tillbaka',
-      editor_add_to: 'Lägg till i',
+      editor_browse_open: 'Öppna',
       editor_add_selected: 'Lägg till markerade ({count})',
       editor_already_added: 'Redan tillagd',
       editor_no_rooms_configured: 'Lägg till minst ett rum innan du bläddrar.',
+      editor_no_mass_rooms: 'Inga rum har en Music Assistant-entitet konfigurerad än — lägg till en ovan för att bläddra Spotify.',
     },
   };
 
@@ -166,6 +184,7 @@
   // core's homeassistant/components/media_player/const.py (2026-08-23) —
   // used to only show Stop/Mute when the entity actually reports support
   // for them, rather than assuming every HEOS player has both.
+  const FEATURE_PAUSE = 1;
   const FEATURE_VOLUME_MUTE = 8;
   const FEATURE_STOP = 4096;
 
@@ -265,6 +284,10 @@
           entity: r.entity,
           name: r.name || r.entity,
           icon: r.icon || 'mdi:speaker',
+          // Optional: this room's Music Assistant counterpart for the same
+          // physical speaker. Only Spotify favorites ever target it —
+          // grouping/volume/radio stay on `entity` (native HEOS) always.
+          mass_entity: r.mass_entity || '',
         })),
         favorites: {
           spotify: (config.favorites && config.favorites.spotify) || [],
@@ -302,7 +325,17 @@
     }
 
     _watchedEntities() {
-      return (this._config?.rooms || []).map((r) => r.entity).filter(Boolean);
+      const rooms = this._config?.rooms || [];
+      const ids = [];
+      for (const r of rooms) {
+        if (r.entity) ids.push(r.entity);
+        // Also watch each room's mass_entity — the hero pulls display
+        // metadata from it (see _metaAttributes) whenever it's playing,
+        // so a track change there needs to trigger a re-render even
+        // though it never touches the HEOS entity's own attributes.
+        if (r.mass_entity) ids.push(r.mass_entity);
+      }
+      return ids;
     }
 
     // Compares only the fields this card actually renders, not full state
@@ -357,15 +390,59 @@
       if (!fill || !this._hass) return;
       const groups = this._computeGroups();
       const focusedLeader = this._resolveFocusedLeader(groups);
-      const st = focusedLeader ? this._hass.states[focusedLeader] : null;
+      const st = focusedLeader ? this._hass.states[this._driveEntity(focusedLeader)] : null;
       if (st?.state !== 'playing') return;
-      const duration = st.attributes?.media_duration;
-      const position = st.attributes?.media_position;
-      const updatedAt = st.attributes?.media_position_updated_at;
+      const meta = st.attributes;
+      const duration = meta?.media_duration;
+      const position = meta?.media_position;
+      const updatedAt = meta?.media_position_updated_at;
       if (typeof duration !== 'number' || duration <= 0 || typeof position !== 'number' || !updatedAt) return;
       const elapsed = (Date.now() - new Date(updatedAt).getTime()) / 1000;
       const current = Math.min(duration, Math.max(0, position + elapsed));
       fill.style.width = `${(current / duration) * 100}%`;
+    }
+
+    // Single source of truth for "which backend actually owns this room's
+    // current playback" — HEOS and Music Assistant behave differently
+    // enough (metadata, queue contents, pause support, transport
+    // reliability) that display and transport logic need one consistent
+    // answer instead of each place re-deriving its own heuristic. A
+    // room's mass_entity is considered "driving" whenever it's itself
+    // actively playing or paused. Returns the mass_entity id when MA is
+    // driving, otherwise null — see _driveEntity() for what actually
+    // consults this (transport and display; grouping/volume/mute do
+    // NOT, see _driveEntity's own comment for why).
+    _massDrivingEntity(leaderEntity) {
+      const room = this._config?.rooms.find((r) => r.entity === leaderEntity);
+      if (!room?.mass_entity) return null;
+      const massSt = this._hass.states[room.mass_entity];
+      return massSt && (massSt.state === 'playing' || massSt.state === 'paused') ? room.mass_entity : null;
+    }
+
+    // Whichever entity actually owns this room's playback right now — the
+    // mass_entity when Music Assistant is driving, the HEOS entity
+    // otherwise. Transport commands (play/pause/stop/next/prev) and the
+    // main button's own status (playing/paused, which commands it
+    // supports) both target/read THIS entity — confirmed live
+    // (2026-08-23) that routing a "next" through the HEOS entity for
+    // MA-driven content behaves differently (worse — see CLAUDE.md) than
+    // asking Music Assistant directly, so once MA is confirmed driving,
+    // everything about controlling ITS playback should go straight to it.
+    // Grouping, volume, and mute stay on the HEOS entity unconditionally
+    // regardless — decided with the owner (2026-08-23): Music Assistant
+    // has no equivalent to controlling a whole physical HEOS group's
+    // volume, only its own single device, so there's no consistent way
+    // to route those through it even if we wanted to.
+    _driveEntity(leaderEntity) {
+      return this._massDrivingEntity(leaderEntity) || leaderEntity;
+    }
+
+    // HEOS reports generic, useless metadata ("Url Stream"/"Url Stream")
+    // for anything Music Assistant hands it to play — confirmed live
+    // (2026-08-23), matches Music Assistant's own documented limitation
+    // ("metadata shows as URL stream due to HEOS API constraints").
+    _metaAttributes(leaderEntity) {
+      return this._hass.states[this._driveEntity(leaderEntity)]?.attributes;
     }
 
     // ---- group derivation ------------------------------------------------
@@ -395,6 +472,18 @@
           id: leaderEntity,
           leaderEntity,
           memberEntities: members,
+          // True when this "group" is really just one room playing or
+          // paused solo — HEOS itself never actually joined it (no real
+          // media_player.join ever happened, group_members is just the
+          // room's own entity reflected back). Kept in the same groups
+          // array so rendering treats every active room uniformly, but
+          // exposed explicitly so callers that need to know "is this a
+          // REAL HEOS group" (e.g. before calling unjoin on it) read a
+          // named field instead of re-deriving memberEntities.length < 2
+          // themselves — that re-derivation was missed once already (the
+          // "unjoin on a room HEOS never grouped" bug fixed in
+          // beta-0.7.3, see CLAUDE.md).
+          isSolo: members.length < 2,
           color: colorForLeader(leaderEntity, rooms),
         });
       }
@@ -457,7 +546,7 @@
           this._render();
           break;
         case 'play-favorite':
-          this._onFavoriteTap(el.dataset.type, el.dataset.id);
+          this._onFavoriteTap(el.dataset.type, el.dataset.id, el.dataset.source);
           break;
         case 'transport':
           this._onTransport(el.dataset.cmd);
@@ -513,6 +602,17 @@
       if (owning && owning.leaderEntity !== focusedLeader) return; // locked
 
       if (owning) {
+        // A room playing/paused solo counts as its own "group of 1" in
+        // _computeGroups() purely for focus/UI purposes — HEOS itself
+        // never considered it grouped (no real join ever happened), so
+        // there's nothing to unjoin. Calling `unjoin` on it anyway fails
+        // live with "Entity ... is not joined to a group" (found
+        // 2026-08-23) — tapping it again should just clear focus.
+        if (owning.isSolo) {
+          this._focusedGroupId = null;
+          this._render();
+          return;
+        }
         if (this._guardPending(entity)) return;
         const remaining = owning.memberEntities.filter((id) => id !== entity);
         if (remaining.length >= 2) {
@@ -575,34 +675,67 @@
       this._render();
     }
 
-    _onFavoriteTap(mediaContentType, mediaContentId) {
+    // Radio favorites always target the focused group's HEOS leader, same
+    // as every other command in this card. Spotify favorites target that
+    // room's `mass_entity` instead — the group itself is still 100% native
+    // HEOS; only the playback source differs. [UNVERIFIED] whether
+    // play_media against the MA entity actually fans out across a group
+    // formed via the native integration's `media_player.join` — needs
+    // confirming live (see CLAUDE.md).
+    _onFavoriteTap(mediaContentType, mediaContentId, source) {
       const groups = this._computeGroups();
       const focusedLeader = this._resolveFocusedLeader(groups);
       if (!focusedLeader || !this._hass) return;
+
+      let targetEntity = focusedLeader;
+      if (source === 'spotify') {
+        const room = this._config.rooms.find((r) => r.entity === focusedLeader);
+        if (!room?.mass_entity) {
+          this._notifyError(t(this._hass, 'error_no_mass_entity'));
+          return;
+        }
+        targetEntity = room.mass_entity;
+      }
+
       this._hass
         .callService(
           'media_player',
           'play_media',
           { media_content_type: mediaContentType, media_content_id: mediaContentId },
-          { entity_id: focusedLeader }
+          { entity_id: targetEntity }
         )
         .catch((err) => this._notifyError(t(this._hass, 'error_play'), err));
     }
 
+    // Targets whichever entity is actually driving (see _driveEntity) —
+    // confirmed live (2026-08-23) that relaying "next" through the HEOS
+    // entity for MA-driven content misbehaves (see CLAUDE.md), so once
+    // Music Assistant is driving, transport goes straight to it instead.
+    // Also debounced the same way _onRoomTap already is (via
+    // _guardPending) — found live (2026-08-23) that a touchscreen
+    // double-firing a single physical tap into two click events would
+    // send a command twice with no protection here, unlike every other
+    // interactive control in this card. A duplicated `next` is easy to
+    // blame on an upstream Spotify skip-limit and never notice it was
+    // actually us.
     _onTransport(cmd) {
       const groups = this._computeGroups();
       const focusedLeader = this._resolveFocusedLeader(groups);
       if (!focusedLeader || !this._hass) return;
+      const targetEntity = this._driveEntity(focusedLeader);
+      if (this._guardPending(`transport:${targetEntity}:${cmd}`)) return;
       const svc =
         cmd === 'play_pause'
           ? 'media_play_pause'
+          : cmd === 'play'
+          ? 'media_play'
           : cmd === 'next'
           ? 'media_next_track'
           : cmd === 'stop'
           ? 'media_stop'
           : 'media_previous_track';
       this._hass
-        .callService('media_player', svc, {}, { entity_id: focusedLeader })
+        .callService('media_player', svc, {}, { entity_id: targetEntity })
         .catch((err) => this._notifyError(t(this._hass, 'error_transport'), err));
     }
 
@@ -613,25 +746,49 @@
         .catch((err) => this._notifyError(t(this._hass, 'error_volume'), err));
     }
 
-    // Fetches what plays after the current track via heos.get_queue.
-    // [UNVERIFIED] assumes queue[0] is the currently playing item and
-    // queue[1] is next — pyheos's QueueItem carries no explicit
-    // current-position flag to confirm this from source alone, needs
-    // live confirmation against a real HEOS queue. Failures are swallowed
-    // quietly (no toast) since this is a display-only nicety, not a
-    // user-initiated action.
+    // Fetches what plays after the current track — from whichever backend
+    // is actually driving (see _massDrivingEntity). HEOS's own get_queue
+    // only knows its own queue, meaningless for anything Music Assistant
+    // is playing (same "Url Stream" problem as its title/artist — found
+    // live, 2026-08-23). Music Assistant has a real equivalent,
+    // `music_assistant.get_queue`, confirmed from home-assistant/core's
+    // music_assistant/media_player.py source (2026-08-23): it returns an
+    // explicit `next_item` field, no positional guessing required — the
+    // queue_item shape is `{name, duration, media_item: {name, artists:
+    // [{name}], album, ...}}` (also confirmed from source, schemas.py).
+    // HEOS's own [UNVERIFIED] queue[1]-is-next assumption is unchanged
+    // and still needs live confirmation for the radio/HEOS path — see
+    // CLAUDE.md. Failures are swallowed quietly (no toast) since this is
+    // a display-only nicety, not a user-initiated action.
     async _refreshNextTrack(focusedLeader, key) {
+      const massEntity = this._massDrivingEntity(focusedLeader);
       try {
-        const result = await this._hass.connection.sendMessagePromise({
-          type: 'call_service',
-          domain: 'heos',
-          service: 'get_queue',
-          service_data: {},
-          target: { entity_id: focusedLeader },
-          return_response: true,
-        });
-        const queue = result?.response?.[focusedLeader]?.queue || [];
-        const next = queue[1] || null;
+        let next = null;
+        if (massEntity) {
+          const result = await this._hass.connection.sendMessagePromise({
+            type: 'call_service',
+            domain: 'music_assistant',
+            service: 'get_queue',
+            service_data: {},
+            target: { entity_id: massEntity },
+            return_response: true,
+          });
+          const nextItem = result?.response?.[massEntity]?.next_item;
+          if (nextItem) {
+            next = { song: nextItem.name, artist: nextItem.media_item?.artists?.[0]?.name || '' };
+          }
+        } else {
+          const result = await this._hass.connection.sendMessagePromise({
+            type: 'call_service',
+            domain: 'heos',
+            service: 'get_queue',
+            service_data: {},
+            target: { entity_id: focusedLeader },
+            return_response: true,
+          });
+          const queue = result?.response?.[focusedLeader]?.queue || [];
+          next = queue[1] || null;
+        }
         if (this._nextTrackCache.key === key) {
           this._nextTrackCache.next = next;
           this._render();
@@ -678,9 +835,22 @@
             }
           : null);
 
-      const leaderState = focusedLeader ? hass.states[focusedLeader] : null;
+      // Reads the driving entity's own state, not always the HEOS
+      // entity's — found on a fresh audit (2026-08-23) that this had been
+      // left reading focusedLeader directly while _renderHero computed
+      // its own isPlaying via _driveEntity, two independent answers to
+      // the same question that could disagree (e.g. if HEOS momentarily
+      // lags a source handoff). No live symptom confirmed from this one,
+      // just closing the gap _driveEntity was introduced to close.
+      const leaderState = focusedLeader ? hass.states[this._driveEntity(focusedLeader)] : null;
       const isPlaying = leaderState?.state === 'playing';
-      const nextKey = isPlaying ? `${focusedLeader}|${leaderState?.attributes?.media_title || ''}` : null;
+      // Keyed off _metaAttributes' title, not the HEOS entity's own
+      // media_title directly — for Music Assistant content the HEOS
+      // entity's title is permanently "Url Stream" (see _metaAttributes),
+      // so keying on it would never change between tracks and the "Up
+      // next" cache would go stale after the very first track of a
+      // session (found live, 2026-08-23).
+      const nextKey = isPlaying ? `${focusedLeader}|${this._metaAttributes(focusedLeader)?.media_title || ''}` : null;
       if (nextKey && nextKey !== this._nextTrackCache.key) {
         this._nextTrackCache = { key: nextKey, next: null };
         this._refreshNextTrack(focusedLeader, nextKey);
@@ -743,14 +913,38 @@
             </div>
           </div>`;
       }
-      const st = hass.states[focusedLeader];
+      // Whichever entity is actually driving this room's playback — see
+      // _driveEntity. Its own state/attributes are authoritative for
+      // everything in this hero: playing/paused, title/artist/art,
+      // progress, and which transport commands are actually supported.
+      const driveEntity = this._driveEntity(focusedLeader);
+      const st = hass.states[driveEntity];
       const isPlaying = st?.state === 'playing';
       const isPaused = st?.state === 'paused';
-      const title = st?.attributes?.media_title || t(hass, 'no_media');
-      const artist = st?.attributes?.media_artist || '';
-      const picture = st?.attributes?.entity_picture;
-      const features = st?.attributes?.supported_features || 0;
+      const meta = st?.attributes;
+      const title = meta?.media_title || t(hass, 'no_media');
+      const artist = meta?.media_artist || '';
+      const picture = meta?.entity_picture;
+      const features = meta?.supported_features || 0;
       const canStop = !!(features & FEATURE_STOP);
+      // Some sources — confirmed live (2026-08-23): HEOS radio streams —
+      // don't support pause at all, only stop (pausing a live stream
+      // isn't meaningful the way pausing a track is). media_play_pause
+      // fails outright ("does not support action") on such an entity
+      // REGARDLESS of direction — not just when it would resolve to
+      // "pause", also when idle and it would resolve to plain "play"
+      // (found live 2026-08-23: after Stop, the Play button itself
+      // stopped working, because it was still calling the combined
+      // play_pause service). So when PAUSE isn't supported, avoid
+      // play_pause entirely — call the direct, unambiguous service for
+      // whichever direction is actually needed instead.
+      const canPause = !!(features & FEATURE_PAUSE);
+      const mainCmd = canPause ? 'play_pause' : isPlaying ? 'stop' : 'play';
+      const mainIcon = isPlaying ? (canPause ? iconPause() : iconStop()) : iconPlay();
+      const mainLabelKey = isPlaying ? (canPause ? 'pause' : 'stop') : 'play';
+      // The separate Stop button is only worth showing alongside a main
+      // button that isn't already covering Stop itself.
+      const showExtraStop = canStop && canPause;
       const names = focusedGroup.memberEntities.map(
         (id) => this._config.rooms.find((r) => r.entity === id)?.name || id
       );
@@ -761,9 +955,9 @@
       // actually populates media_position/media_duration for every source
       // (radio streams typically have no duration at all, in which case
       // the bar is correctly just hidden below).
-      const duration = st?.attributes?.media_duration;
-      const position = st?.attributes?.media_position;
-      const updatedAt = st?.attributes?.media_position_updated_at;
+      const duration = meta?.media_duration;
+      const position = meta?.media_position;
+      const updatedAt = meta?.media_position_updated_at;
       const hasProgress =
         (isPlaying || isPaused) && typeof duration === 'number' && duration > 0 && typeof position === 'number' && !!updatedAt;
       let progressPct = 0;
@@ -793,12 +987,10 @@
           <div class="hero-spacer"></div>
           <div class="hero-transport">
             <button class="tbtn" data-action="transport" data-cmd="prev" title="${escHtml(t(hass, 'previous'))}" aria-label="${escHtml(t(hass, 'previous'))}">${iconPrev()}</button>
-            <button class="tbtn tbtn-main" data-action="transport" data-cmd="play_pause" title="${escHtml(t(hass, isPlaying ? 'pause' : 'play'))}" aria-label="${escHtml(t(hass, isPlaying ? 'pause' : 'play'))}">${
-        isPlaying ? iconPause() : iconPlay()
-      }</button>
+            <button class="tbtn tbtn-main" data-action="transport" data-cmd="${mainCmd}" title="${escHtml(t(hass, mainLabelKey))}" aria-label="${escHtml(t(hass, mainLabelKey))}">${mainIcon}</button>
             <button class="tbtn" data-action="transport" data-cmd="next" title="${escHtml(t(hass, 'next'))}" aria-label="${escHtml(t(hass, 'next'))}">${iconNext()}</button>
             ${
-              canStop
+              showExtraStop
                 ? `<button class="tbtn" data-action="transport" data-cmd="stop" title="${escHtml(t(hass, 'stop'))}" aria-label="${escHtml(t(hass, 'stop'))}">${iconStop()}</button>`
                 : ''
             }
@@ -910,12 +1102,14 @@
       const hass = this._hass;
       const cfg = this._config.favorites;
       const list = this._activeFavTab === 'spotify' ? cfg.spotify : cfg.radio;
-      const disabled = !focusedLeader;
+      const focusedRoom = focusedLeader ? this._config.rooms.find((r) => r.entity === focusedLeader) : null;
+      const noMassEntity = this._activeFavTab === 'spotify' && !!focusedLeader && !focusedRoom?.mass_entity;
+      const disabled = !focusedLeader || noMassEntity;
       const chips = (list || [])
         .map((fav) => {
           const icon = fav.icon || (this._activeFavTab === 'radio' ? 'mdi:radio' : 'mdi:spotify');
           return `
-            <div class="fav-chip ${disabled ? 'fav-disabled' : ''}" data-action="play-favorite" data-type="${escHtml(
+            <div class="fav-chip ${disabled ? 'fav-disabled' : ''}" data-action="play-favorite" data-source="${this._activeFavTab}" data-type="${escHtml(
             fav.media_content_type
           )}" data-id="${escHtml(fav.media_content_id)}">
               <div class="fav-icon"><ha-icon icon="${escHtml(icon)}"></ha-icon></div>
@@ -923,6 +1117,7 @@
             </div>`;
         })
         .join('');
+      const hintKey = !focusedLeader ? 'favorites_disabled_hint' : noMassEntity ? 'favorites_no_mass_hint' : 'favorites_ready_hint';
       return `
         <div class="favorites">
           <div class="fav-header">
@@ -935,7 +1130,7 @@
       )}</button>
             </div>
             <div class="fav-hint" style="color:${disabled ? 'var(--mmc-text-secondary)' : 'var(--mmc-accent)'};">
-              ${escHtml(disabled ? t(hass, 'favorites_disabled_hint') : t(hass, 'favorites_ready_hint'))}
+              ${escHtml(t(hass, hintKey))}
             </div>
           </div>
           <div class="fav-grid">${chips || `<div class="fav-empty">${escHtml(t(hass, 'no_favorites'))}</div>`}</div>
@@ -1068,8 +1263,15 @@
       super();
       this._hass = null;
       this._config = { rooms: [], favorites: { spotify: [], radio: [] } };
-      this._radioBrowse = { room: null, stack: [], loading: false, error: null, addCategory: 'spotify' };
-      this._selectedBrowseIds = new Set();
+      // Two fully independent browse sessions, one per category — Spotify
+      // browses a room's `mass_entity` (Music Assistant), Radio browses
+      // its `entity` (HEOS). Kept as one Map keyed by category (not two
+      // parallel sets of fields) so every call site takes `category` as
+      // a parameter instead of a repeated `isSpotify ? A : B` ternary.
+      this._browse = {
+        spotify: { room: null, stack: [], loading: false, error: null, selected: new Set() },
+        radio: { room: null, stack: [], loading: false, error: null, selected: new Set() },
+      };
     }
 
     setConfig(config) {
@@ -1084,12 +1286,14 @@
           entity: r.entity || '',
           name: r.name || '',
           icon: r.icon || 'mdi:speaker',
+          mass_entity: r.mass_entity || '',
         })),
         favorites: {
-          // Spotify favorites are now sourced from the same browse picker
-          // as radio (both come from HEOS's Favorites/music-source tree),
-          // so both need the same `??` (not `||`) empty-string-preserving
-          // normalization — see the radio comment below for why.
+          // Both arrays use `??` (not `||`) for media_content_type — see
+          // the radio comment below for why an empty string must survive.
+          // Spotify and radio come from two separate browse backends
+          // since 0.7.0 (Music Assistant vs HEOS respectively), but the
+          // same empty-string gotcha applies to both.
           spotify: (config?.favorites?.spotify || []).map((f) => ({
             name: f.name || '',
             icon: f.icon || 'mdi:spotify',
@@ -1139,7 +1343,6 @@
           </div>
           <div class="section">
             <div class="section-title">${escHtml(t(hass, 'editor_favorites'))}</div>
-            <div class="hint">${escHtml(t(hass, 'editor_favorites_hint'))}</div>
             ${this._renderFavoritesSection()}
           </div>
         </div>`;
@@ -1151,25 +1354,64 @@
       return this._config.rooms
         .map(
           (room, idx) => `
-        <div class="row">
-          <ha-entity-picker class="field-entity" data-idx="${idx}" data-field="entity"></ha-entity-picker>
-          <input class="field-text" type="text" data-idx="${idx}" data-field="name" data-target="rooms" placeholder="${escHtml(
+        <div class="room-block">
+          <div class="row">
+            <ha-entity-picker class="field-entity" data-idx="${idx}" data-field="entity"></ha-entity-picker>
+            <input class="field-text" type="text" data-idx="${idx}" data-field="name" data-target="rooms" placeholder="${escHtml(
             t(hass, 'editor_room_name')
           )}" value="${escHtml(room.name)}" />
-          <ha-icon-picker class="field-icon" data-idx="${idx}" data-field="icon" data-target="rooms"></ha-icon-picker>
-          <button class="icon-btn" data-action="remove-room" data-idx="${idx}" title="${escHtml(t(hass, 'editor_remove'))}" aria-label="${escHtml(t(hass, 'editor_remove'))}">${iconTrash()}</button>
+            <ha-icon-picker class="field-icon" data-idx="${idx}" data-field="icon" data-target="rooms"></ha-icon-picker>
+            <button class="icon-btn" data-action="remove-room" data-idx="${idx}" title="${escHtml(t(hass, 'editor_remove'))}" aria-label="${escHtml(t(hass, 'editor_remove'))}">${iconTrash()}</button>
+          </div>
+          <div class="row row-mass" title="${escHtml(t(hass, 'editor_room_mass_entity_hint'))}">
+            <span class="mass-tag">MA</span>
+            <ha-entity-picker class="field-entity" data-idx="${idx}" data-field="mass_entity"></ha-entity-picker>
+          </div>
         </div>`
         )
         .join('');
     }
 
     _renderFavoritesSection() {
+      return `${this._renderFavSource('spotify')}${this._renderFavSource('radio')}`;
+    }
+
+    // Spotify and Radio favorites now come from two entirely separate
+    // browse sessions, each against a different backend for the same
+    // physical room — Spotify via that room's `mass_entity` (Music
+    // Assistant, the user's real Spotify library), Radio via its `entity`
+    // (HEOS, unchanged). `category` is 'spotify' or 'radio' throughout.
+    _renderFavSource(category) {
       const hass = this._hass;
-      const rooms = this._config.rooms.filter((r) => r.entity);
+      const isSpotify = category === 'spotify';
+      const rooms = isSpotify
+        ? this._config.rooms.filter((r) => r.entity && r.mass_entity)
+        : this._config.rooms.filter((r) => r.entity);
+      const browse = this._browse[category];
+      const selectedIds = browse.selected;
+      const list = this._config.favorites[category];
+
+      const favRow = (fav, idx) => `
+        <div class="row row-readonly">
+          <div class="row-icon"><ha-icon icon="${escHtml(fav.icon || (isSpotify ? 'mdi:spotify' : 'mdi:radio'))}"></ha-icon></div>
+          <div class="row-name">${escHtml(fav.name)}</div>
+          <button class="icon-btn" data-action="remove-${category}" data-idx="${idx}" title="${escHtml(t(hass, 'editor_remove'))}" aria-label="${escHtml(t(hass, 'editor_remove'))}">${iconTrash()}</button>
+        </div>`;
+      const addedRows = list.map((f, i) => favRow(f, i)).join('');
+
+      const head = `
+        <div class="fav-source-title">${escHtml(t(hass, isSpotify ? 'editor_favorites_spotify_title' : 'editor_favorites_radio_title'))}</div>
+        <div class="fav-source-via">${escHtml(t(hass, isSpotify ? 'editor_favorites_spotify_via' : 'editor_favorites_radio_via'))}</div>`;
+
       if (!rooms.length) {
-        return `<div class="hint">${escHtml(t(hass, 'editor_no_rooms_configured'))}</div>`;
+        return `
+          <div class="fav-source">
+            ${head}
+            <div class="hint">${escHtml(t(hass, isSpotify ? 'editor_no_mass_rooms' : 'editor_no_rooms_configured'))}</div>
+            <div class="row-list">${addedRows}</div>
+          </div>`;
       }
-      const browse = this._radioBrowse;
+
       const roomOptions = rooms
         .map(
           (r) =>
@@ -1187,62 +1429,65 @@
       } else if (browse.stack.length) {
         const current = browse.stack[browse.stack.length - 1];
         const items = current.items || [];
-        const alreadyAdded = [...this._config.favorites.spotify, ...this._config.favorites.radio];
         const rows = items
           .map((item, i) => {
-            const isBrowsable = !!item.can_expand;
-            const already = alreadyAdded.some((f) => f.media_content_id === item.media_content_id);
-            const checked = this._selectedBrowseIds.has(item.media_content_id);
+            // A row can be browsable, playable-as-a-whole, or both at once
+            // — confirmed live against Music Assistant's browse_media tree
+            // (2026-08-23): a Spotify playlist is `can_expand: true` (its
+            // tracks) AND `can_play: true` (the playlist itself), unlike
+            // every HEOS item seen so far where the two were mutually
+            // exclusive. `can_play` defaults to true when the field is
+            // absent (HEOS's shape) so existing behavior is unchanged.
+            const canExpand = !!item.can_expand;
+            const canPlay = item.can_play !== false;
+            const already = list.some((f) => f.media_content_id === item.media_content_id);
+            const checked = selectedIds.has(item.media_content_id);
             return `
-              <div class="browse-row" data-action="${isBrowsable ? 'browse-drill' : 'toggle-select'}" data-idx="${i}">
+              <div class="browse-row">
                 ${
-                  isBrowsable
-                    ? `<span class="browse-folder-icon">${iconChevron()}</span>`
-                    : `<input type="checkbox" ${checked ? 'checked' : ''} ${already ? 'disabled' : ''} data-action="toggle-select" data-idx="${i}" />`
+                  canPlay
+                    ? `<input type="checkbox" ${checked ? 'checked' : ''} ${already ? 'disabled' : ''} data-action="toggle-select" data-idx="${i}" data-category="${category}" />`
+                    : `<span class="browse-checkbox-spacer"></span>`
                 }
-                <span class="browse-title">${escHtml(item.title || item.media_content_id || '')}</span>
+                <span class="browse-title" ${canExpand ? `data-action="browse-drill" data-idx="${i}" data-category="${category}"` : ''}>${escHtml(
+              item.title || item.media_content_id || ''
+            )}</span>
+                ${
+                  canExpand
+                    ? `<button class="browse-drill-btn" data-action="browse-drill" data-idx="${i}" data-category="${category}" aria-label="${escHtml(t(hass, 'editor_browse_open'))}"><span class="browse-folder-icon">${iconChevron()}</span></button>`
+                    : ''
+                }
                 ${already ? `<span class="browse-badge">${escHtml(t(hass, 'editor_already_added'))}</span>` : ''}
               </div>`;
           })
           .join('');
-        const spotifyActive = browse.addCategory === 'spotify';
         browsePanel = `
           <div class="browse-panel">
             <div class="browse-toolbar">
-              ${browse.stack.length > 1 ? `<button class="link-btn" data-action="browse-back">&larr; ${escHtml(t(hass, 'editor_browse_back'))}</button>` : ''}
-              <div class="category-toggle">
-                <span class="category-toggle-label">${escHtml(t(hass, 'editor_add_to'))}</span>
-                <button class="cat-btn ${spotifyActive ? 'cat-btn-active' : ''}" data-action="set-add-category" data-category="spotify">${escHtml(t(hass, 'spotify'))}</button>
-                <button class="cat-btn ${!spotifyActive ? 'cat-btn-active' : ''}" data-action="set-add-category" data-category="radio">${escHtml(t(hass, 'radio'))}</button>
-              </div>
+              ${browse.stack.length > 1 ? `<button class="link-btn" data-action="browse-back" data-category="${category}">&larr; ${escHtml(t(hass, 'editor_browse_back'))}</button>` : ''}
               <div class="toolbar-spacer"></div>
-              <button class="add-btn" data-action="add-selected" ${this._selectedBrowseIds.size ? '' : 'disabled'}>${escHtml(
-        t(hass, 'editor_add_selected', { count: this._selectedBrowseIds.size })
-      )}</button>
+              <button class="add-btn" data-action="add-selected" data-category="${category}" ${selectedIds.size ? '' : 'disabled'}>${escHtml(
+          t(hass, 'editor_add_selected', { count: selectedIds.size })
+        )}</button>
             </div>
             <div class="browse-list">${rows || `<div class="hint">${escHtml(t(hass, 'editor_browse_empty'))}</div>`}</div>
           </div>`;
       }
 
-      const favRow = (fav, idx, category) => `
-        <div class="row row-readonly">
-          <div class="row-icon"><ha-icon icon="${escHtml(fav.icon || (category === 'spotify' ? 'mdi:spotify' : 'mdi:radio'))}"></ha-icon></div>
-          <div class="row-name">${escHtml(fav.name)}</div>
-          <button class="icon-btn" data-action="remove-${category}" data-idx="${idx}" title="${escHtml(t(hass, 'editor_remove'))}" aria-label="${escHtml(t(hass, 'editor_remove'))}">${iconTrash()}</button>
-        </div>`;
-      const addedRows =
-        this._config.favorites.spotify.map((f, i) => favRow(f, i, 'spotify')).join('') +
-        this._config.favorites.radio.map((f, i) => favRow(f, i, 'radio')).join('');
-
       return `
-        <div class="browse-controls">
-          <label class="browse-room-label">${escHtml(t(hass, 'editor_browse_from_room'))}
-            <select class="browse-room-select" data-action="browse-room-select">${roomOptions}</select>
-          </label>
-          <button class="add-btn" data-action="start-browse">${escHtml(t(hass, 'editor_browse_button'))}</button>
-        </div>
-        ${browsePanel}
-        <div class="row-list">${addedRows}</div>`;
+        <div class="fav-source">
+          ${head}
+          <div class="browse-controls">
+            <label class="browse-room-label">${escHtml(t(hass, 'editor_browse_from_room'))}
+              <select class="browse-room-select" data-action="browse-room-select" data-category="${category}">${roomOptions}</select>
+            </label>
+            <button class="add-btn" data-action="start-browse" data-category="${category}">${escHtml(
+        t(hass, isSpotify ? 'editor_browse_button_spotify' : 'editor_browse_button_radio')
+      )}</button>
+          </div>
+          ${browsePanel}
+          <div class="row-list">${addedRows}</div>
+        </div>`;
     }
 
     _bindPickers() {
@@ -1254,6 +1499,13 @@
         el.value = this._config.rooms[idx]?.entity || '';
         el.includeDomains = ['media_player'];
         el.label = t(hass, 'editor_room_entity');
+      });
+      this.shadowRoot.querySelectorAll('ha-entity-picker[data-field="mass_entity"]').forEach((el) => {
+        const idx = Number(el.dataset.idx);
+        el.hass = hass;
+        el.value = this._config.rooms[idx]?.mass_entity || '';
+        el.includeDomains = ['media_player'];
+        el.label = t(hass, 'editor_room_mass_entity');
       });
       this.shadowRoot.querySelectorAll('ha-icon-picker[data-field="icon"]').forEach((el) => {
         const idx = Number(el.dataset.idx);
@@ -1269,6 +1521,12 @@
         e.stopPropagation();
         const idx = Number(el.dataset.idx);
         this._config.rooms[idx].entity = e.detail.value || '';
+        this._fireConfigChanged();
+        this._render();
+      } else if (el.matches && el.matches('ha-entity-picker[data-field="mass_entity"]')) {
+        e.stopPropagation();
+        const idx = Number(el.dataset.idx);
+        this._config.rooms[idx].mass_entity = e.detail.value || '';
         this._fireConfigChanged();
         this._render();
       } else if (el.matches && el.matches('ha-icon-picker[data-field="icon"]')) {
@@ -1289,9 +1547,10 @@
         return;
       }
       if (el.matches('select.browse-room-select')) {
-        this._radioBrowse.room = el.value;
-        this._radioBrowse.stack = [];
-        this._selectedBrowseIds.clear();
+        const browse = this._browse[el.dataset.category];
+        browse.room = el.value;
+        browse.stack = [];
+        browse.selected.clear();
         this._render();
       }
     }
@@ -1301,9 +1560,10 @@
       if (!el) return;
       const action = el.dataset.action;
       const idx = el.dataset.idx !== undefined ? Number(el.dataset.idx) : null;
+      const category = el.dataset.category;
       switch (action) {
         case 'add-room':
-          this._config.rooms.push({ entity: '', name: '', icon: 'mdi:speaker' });
+          this._config.rooms.push({ entity: '', name: '', icon: 'mdi:speaker', mass_entity: '' });
           this._render();
           this._fireConfigChanged();
           break;
@@ -1323,103 +1583,133 @@
           this._fireConfigChanged();
           break;
         case 'start-browse':
-          this._startBrowse();
+          this._startBrowse(category);
           break;
         case 'browse-drill':
-          this._drillBrowse(idx);
+          this._drillBrowse(category, idx);
           break;
-        case 'browse-back':
-          this._radioBrowse.stack.pop();
-          this._selectedBrowseIds.clear();
+        case 'browse-back': {
+          const browse = this._browse[category];
+          browse.selected.clear();
+          browse.stack.pop();
           this._render();
           break;
+        }
         case 'toggle-select': {
-          const current = this._radioBrowse.stack[this._radioBrowse.stack.length - 1];
+          const browse = this._browse[category];
+          const current = browse.stack[browse.stack.length - 1];
           const item = current?.items?.[idx];
           if (item) {
-            if (this._selectedBrowseIds.has(item.media_content_id)) this._selectedBrowseIds.delete(item.media_content_id);
-            else this._selectedBrowseIds.add(item.media_content_id);
+            if (browse.selected.has(item.media_content_id)) browse.selected.delete(item.media_content_id);
+            else browse.selected.add(item.media_content_id);
           }
           this._render();
           break;
         }
         case 'add-selected':
-          this._addSelectedFavorites();
-          break;
-        case 'set-add-category':
-          this._radioBrowse.addCategory = el.dataset.category;
-          this._render();
+          this._addSelectedFavorites(category);
           break;
         default:
           break;
       }
     }
 
-    async _startBrowse() {
-      const room = this._radioBrowse.room || this._config.rooms[0]?.entity;
-      if (!room || !this._hass) return;
-      this._radioBrowse.room = room;
-      this._radioBrowse.loading = true;
-      this._radioBrowse.error = null;
+    // Resolves the entity a browse session for `category` should actually
+    // hit — the room's own HEOS entity for radio (unchanged), or that
+    // room's `mass_entity` for Spotify (Music Assistant's own browse tree,
+    // the user's real Spotify library — never HEOS's).
+    _browseTargetEntity(category, roomEntity) {
+      if (category !== 'spotify') return roomEntity;
+      return this._config.rooms.find((r) => r.entity === roomEntity)?.mass_entity || null;
+    }
+
+    // Shared browse_media call — `item` omitted fetches the root, passed
+    // fetches that item's children. Returns a stack entry or throws.
+    async _fetchBrowseNode(targetEntity, item) {
+      const result = await this._hass.connection.sendMessagePromise(
+        item
+          ? { type: 'media_player/browse_media', entity_id: targetEntity, media_content_type: item.media_content_type, media_content_id: item.media_content_id }
+          : { type: 'media_player/browse_media', entity_id: targetEntity }
+      );
+      return { title: result.title || item?.title || '', items: result.children || [] };
+    }
+
+    async _startBrowse(category) {
+      const isSpotify = category === 'spotify';
+      const browse = this._browse[category];
+      const rooms = isSpotify
+        ? this._config.rooms.filter((r) => r.entity && r.mass_entity)
+        : this._config.rooms.filter((r) => r.entity);
+      const room = browse.room || rooms[0]?.entity;
+      const targetEntity = room ? this._browseTargetEntity(category, room) : null;
+      if (!targetEntity || !this._hass) return;
+      browse.room = room;
+      browse.loading = true;
+      browse.error = null;
       this._render();
       try {
-        // [UNVERIFIED] standard HA media browser websocket command; not
-        // previously called from any card in this project. Confirm the
-        // response shape (title/children/can_expand) against a real HEOS
-        // media_player before relying on this in production.
-        const result = await this._hass.connection.sendMessagePromise({
-          type: 'media_player/browse_media',
-          entity_id: room,
-        });
-        this._radioBrowse.loading = false;
-        this._radioBrowse.stack = [{ title: result.title || '', items: result.children || [] }];
+        // [UNVERIFIED] standard HA media browser websocket command. The
+        // HEOS-entity shape (title/children/can_expand) was confirmed
+        // live; the Music Assistant entity's shape for Spotify content has
+        // only partially been (see CLAUDE.md).
+        const root = await this._fetchBrowseNode(targetEntity);
+        browse.stack = [root];
+        // Nobody wants to add favorites from Artists/Albums/Tracks/Radio
+        // stations/Podcasts on a multiroom dashboard — jump straight into
+        // "Playlists" for Spotify (confirmed live: it's always present at
+        // the root) while leaving the root reachable via Back, in case
+        // that's not actually what someone wants this time.
+        if (isSpotify) {
+          const playlists = root.items.find((it) => it.can_expand && /playlist/i.test(it.title || ''));
+          if (playlists) browse.stack.push(await this._fetchBrowseNode(targetEntity, playlists));
+        }
+        browse.loading = false;
       } catch (err) {
-        this._radioBrowse.loading = false;
-        this._radioBrowse.error = err;
+        browse.loading = false;
+        browse.error = err;
       }
       this._render();
     }
 
-    async _drillBrowse(idx) {
-      const current = this._radioBrowse.stack[this._radioBrowse.stack.length - 1];
+    async _drillBrowse(category, idx) {
+      const browse = this._browse[category];
+      const current = browse.stack[browse.stack.length - 1];
       const item = current?.items?.[idx];
-      if (!item || !this._hass) return;
-      this._radioBrowse.loading = true;
-      this._selectedBrowseIds.clear();
+      const targetEntity = this._browseTargetEntity(category, browse.room);
+      if (!item || !targetEntity || !this._hass) return;
+      browse.loading = true;
+      browse.selected.clear();
       this._render();
       try {
-        const result = await this._hass.connection.sendMessagePromise({
-          type: 'media_player/browse_media',
-          entity_id: this._radioBrowse.room,
-          media_content_type: item.media_content_type,
-          media_content_id: item.media_content_id,
-        });
-        this._radioBrowse.loading = false;
-        this._radioBrowse.stack.push({ title: result.title || item.title || '', items: result.children || [] });
+        browse.stack.push(await this._fetchBrowseNode(targetEntity, item));
+        browse.loading = false;
       } catch (err) {
-        this._radioBrowse.loading = false;
-        this._radioBrowse.error = err;
+        browse.loading = false;
+        browse.error = err;
       }
       this._render();
     }
 
-    _addSelectedFavorites() {
-      const current = this._radioBrowse.stack[this._radioBrowse.stack.length - 1];
+    _addSelectedFavorites(category) {
+      const isSpotify = category === 'spotify';
+      const browse = this._browse[category];
+      const current = browse.stack[browse.stack.length - 1];
       const items = current?.items || [];
-      const toAdd = items.filter((it) => this._selectedBrowseIds.has(it.media_content_id) && !it.can_expand);
-      const category = this._radioBrowse.addCategory === 'radio' ? 'radio' : 'spotify';
+      // A selected item may also be browsable (e.g. a Spotify playlist,
+      // can_expand AND can_play both true) — only exclude items that were
+      // never selectable in the first place (can_play === false).
+      const toAdd = items.filter((it) => browse.selected.has(it.media_content_id) && it.can_play !== false);
       const target = this._config.favorites[category];
-      const alreadyEverywhere = [...this._config.favorites.spotify, ...this._config.favorites.radio];
       for (const item of toAdd) {
-        if (alreadyEverywhere.some((f) => f.media_content_id === item.media_content_id)) continue;
+        if (target.some((f) => f.media_content_id === item.media_content_id)) continue;
         target.push({
           name: item.title || item.media_content_id,
-          icon: category === 'spotify' ? 'mdi:spotify' : 'mdi:radio',
+          icon: isSpotify ? 'mdi:spotify' : 'mdi:radio',
           media_content_type: item.media_content_type,
           media_content_id: item.media_content_id,
         });
       }
-      this._selectedBrowseIds.clear();
+      browse.selected.clear();
       this._render();
       this._fireConfigChanged();
     }
@@ -1430,7 +1720,15 @@
         * { box-sizing:border-box; }
         .editor { display:flex; flex-direction:column; gap:20px; padding:8px 0; }
         .section-title { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color: var(--secondary-text-color); margin-bottom:8px; }
+        .room-block { border:1px solid var(--divider-color,#444); border-radius:10px; padding:10px 12px 2px; margin-bottom:10px; }
         .row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+        .row-mass { border-top:1px dashed var(--divider-color,#444); padding-top:8px; }
+        .mass-tag {
+          font-size:9.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
+          color: var(--primary-color, #03a9f4); background: color-mix(in srgb, var(--primary-color, #03a9f4) 16%, transparent);
+          border:1px solid color-mix(in srgb, var(--primary-color, #03a9f4) 45%, transparent);
+          border-radius:4px; padding:2px 6px; flex-shrink:0;
+        }
         .row-readonly { background: var(--secondary-background-color, rgba(0,0,0,.04)); border-radius:8px; padding:6px 10px; }
         .row-icon { display:flex; align-items:center; justify-content:center; width:28px; }
         .row-name { flex-grow:1; font-size:14px; }
@@ -1449,15 +1747,19 @@
         .browse-toolbar { display:flex; align-items:center; gap:10px; margin-bottom:8px; flex-wrap:wrap; }
         .browse-toolbar .add-btn { height:36px; }
         .toolbar-spacer { flex-grow:1; }
-        .category-toggle { display:flex; align-items:center; gap:6px; }
-        .category-toggle-label { font-size:12px; color: var(--secondary-text-color); }
-        .cat-btn { height:32px; padding:0 12px; border-radius:16px; border:1px solid var(--divider-color,#444); background:transparent; color: var(--secondary-text-color); cursor:pointer; font-size:12px; font-weight:600; }
-        .cat-btn-active { background: var(--primary-color, #03a9f4); border-color: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
+        .fav-source { border:1px solid var(--divider-color,#444); border-radius:10px; padding:14px 16px; margin-top:14px; }
+        .fav-source-title { font-size:14px; font-weight:600; }
+        .fav-source-via { font-size:11.5px; color: var(--secondary-text-color); margin-bottom:10px; }
         .browse-list { max-height:260px; overflow-y:auto; display:flex; flex-direction:column; gap:4px; }
-        .browse-row { display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:pointer; min-height:40px; }
-        .browse-row:hover { background: rgba(128,128,128,.12); }
-        .browse-folder-icon { transform:rotate(-90deg); display:flex; }
+        .browse-row { display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; min-height:40px; }
+        .browse-row:hover { background: rgba(128,128,128,.08); }
+        .browse-checkbox-spacer { width:18px; flex-shrink:0; }
         .browse-title { flex-grow:1; font-size:13.5px; }
+        .browse-title[data-action] { cursor:pointer; }
+        .browse-title[data-action]:hover { text-decoration:underline; }
+        .browse-drill-btn { width:32px; height:32px; min-width:32px; border-radius:8px; border:none; background:transparent; color: var(--secondary-text-color); cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+        .browse-drill-btn:hover { background: rgba(128,128,128,.15); color: var(--primary-text-color); }
+        .browse-folder-icon { transform:rotate(-90deg); display:flex; }
         .browse-badge { font-size:11px; color: var(--secondary-text-color); }
         .link-btn { background:none; border:none; color: var(--primary-color); cursor:pointer; font-size:13px; padding:6px 0; margin-bottom:6px; }
       `;

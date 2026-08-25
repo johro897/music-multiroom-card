@@ -1,0 +1,593 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>music-multiroom-card tests</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #111; color: #ddd; padding: 24px; max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 18px; }
+  .summary { font-size: 15px; font-weight: 600; margin: 16px 0; padding: 10px 14px; border-radius: 8px; }
+  .summary.pass { background: #103a1f; color: #7ee0a0; }
+  .summary.fail { background: #3a1010; color: #f08585; }
+  ul { list-style: none; padding: 0; }
+  li { padding: 6px 10px; border-radius: 6px; margin-bottom: 3px; font-size: 13px; font-family: ui-monospace, monospace; }
+  li.pass { background: #16281c; color: #8fd6a8; }
+  li.fail { background: #2a1414; color: #f2a3a3; }
+  li .err { display: block; color: #e0b0b0; margin-top: 4px; white-space: pre-wrap; }
+  #card-host { position: absolute; left: -9999px; top: -9999px; }
+</style>
+</head>
+<body>
+<h1>music-multiroom-card — test suite</h1>
+<p style="color:#999; font-size:13px;">Open this file directly in a browser, or serve the repo root with any static file server and open <code>/test/music-multiroom-card.test.html</code>. Loads the real card file from <code>../music-multiroom-card.js</code> — see <code>test/README.md</code>. Replaces the ad-hoc scratch-folder scripts used during development; see CLAUDE.md for the history.</p>
+<div id="summary"></div>
+<ul id="results"></ul>
+
+<div id="card-host"></div>
+
+<script src="../music-multiroom-card.js"></script>
+<script>
+(async () => {
+  // ---------------------------------------------------------------------
+  // Tiny zero-dependency test framework
+  // ---------------------------------------------------------------------
+  const cases = [];
+  function test(name, fn) { cases.push({ name, fn }); }
+
+  function assertEqual(actual, expected, msg) {
+    if (actual !== expected) {
+      throw new Error(`${msg || 'assertEqual failed'}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+    }
+  }
+  function assertTrue(cond, msg) {
+    if (!cond) throw new Error(msg || 'assertTrue failed');
+  }
+  function assertDeepEqual(actual, expected, msg) {
+    const a = JSON.stringify(actual);
+    const e = JSON.stringify(expected);
+    if (a !== e) throw new Error(`${msg || 'assertDeepEqual failed'}: expected ${e}, got ${a}`);
+  }
+
+  // ---------------------------------------------------------------------
+  // Helpers for building fresh card/editor instances and fake hass objects
+  // ---------------------------------------------------------------------
+  const host = document.getElementById('card-host');
+
+  function freshCard() {
+    const el = document.createElement('music-multiroom-card');
+    host.appendChild(el);
+    return el;
+  }
+  function freshEditor() {
+    const el = document.createElement('music-multiroom-card-editor');
+    host.appendChild(el);
+    return el;
+  }
+
+  function fakeHass({ states = {}, callServiceImpl, sendMessageImpl } = {}) {
+    const calls = [];
+    const messages = [];
+    const hass = {
+      states,
+      locale: { language: 'en' },
+      callService: (domain, service, data, target) => {
+        calls.push({ domain, service, data, target });
+        return callServiceImpl ? callServiceImpl(domain, service, data, target) : Promise.resolve();
+      },
+      connection: {
+        sendMessagePromise: (msg) => {
+          messages.push(msg);
+          return sendMessageImpl ? sendMessageImpl(msg) : Promise.resolve({ children: [] });
+        },
+      },
+    };
+    return { hass, calls, messages };
+  }
+
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // ---------------------------------------------------------------------
+  // Card: favorite routing
+  // ---------------------------------------------------------------------
+  test('Spotify favorite routes to mass_entity when configured', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_kok', name: 'Köket', mass_entity: 'media_player.mass_kok' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    const { hass, calls } = fakeHass({
+      states: { 'media_player.heos_kok': { state: 'playing', attributes: { group_members: ['media_player.heos_kok'] } } },
+    });
+    card.hass = hass;
+    card._focusedGroupId = 'media_player.heos_kok';
+    card._onFavoriteTap('playlist', 'spotify:playlist:abc', 'spotify');
+    assertEqual(calls.length, 1, 'expected exactly one service call');
+    assertEqual(calls[0].service, 'play_media');
+    assertEqual(calls[0].target.entity_id, 'media_player.mass_kok');
+  });
+
+  test('Spotify favorite errors (no service call) when room has no mass_entity', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_hallen', name: 'Hallen' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    const { hass, calls } = fakeHass({
+      states: { 'media_player.heos_hallen': { state: 'playing', attributes: { group_members: ['media_player.heos_hallen'] } } },
+    });
+    let notified = false;
+    card.addEventListener('hass-notification', () => { notified = true; });
+    card.hass = hass;
+    card._focusedGroupId = 'media_player.heos_hallen';
+    card._onFavoriteTap('playlist', 'spotify:playlist:abc', 'spotify');
+    assertEqual(calls.length, 0, 'expected no service call');
+    assertTrue(notified, 'expected an error toast');
+  });
+
+  test('Radio favorite always routes to the HEOS leader entity', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_kok', name: 'Köket', mass_entity: 'media_player.mass_kok' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    const { hass, calls } = fakeHass({
+      states: { 'media_player.heos_kok': { state: 'playing', attributes: { group_members: ['media_player.heos_kok'] } } },
+    });
+    card.hass = hass;
+    card._focusedGroupId = 'media_player.heos_kok';
+    card._onFavoriteTap('', 'heos-fav-1', 'radio');
+    assertEqual(calls[0].target.entity_id, 'media_player.heos_kok');
+  });
+
+  // ---------------------------------------------------------------------
+  // Card: metadata / "who's driving"
+  // ---------------------------------------------------------------------
+  test('_metaAttributes prefers mass_entity while playing, falls back to HEOS otherwise', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_kok', name: 'Köket', mass_entity: 'media_player.mass_kok' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    card.hass = fakeHass({
+      states: {
+        'media_player.heos_kok': { state: 'playing', attributes: { media_title: 'Url Stream' } },
+        'media_player.mass_kok': { state: 'playing', attributes: { media_title: 'Här kommer solen' } },
+      },
+    }).hass;
+    assertEqual(card._metaAttributes('media_player.heos_kok').media_title, 'Här kommer solen');
+  });
+
+  test('_metaAttributes still prefers mass_entity while paused (not just playing)', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_kok', name: 'Köket', mass_entity: 'media_player.mass_kok' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    card.hass = fakeHass({
+      states: {
+        'media_player.heos_kok': { state: 'paused', attributes: { media_title: 'Url Stream' } },
+        'media_player.mass_kok': { state: 'paused', attributes: { media_title: 'Här kommer solen' } },
+      },
+    }).hass;
+    assertEqual(card._metaAttributes('media_player.heos_kok').media_title, 'Här kommer solen');
+  });
+
+  test('_metaAttributes falls back to HEOS when mass_entity is idle', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_hallen', name: 'Hallen', mass_entity: 'media_player.mass_hallen' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    card.hass = fakeHass({
+      states: {
+        'media_player.heos_hallen': { state: 'playing', attributes: { media_title: 'Rix FM' } },
+        'media_player.mass_hallen': { state: 'idle', attributes: { media_title: 'stale' } },
+      },
+    }).hass;
+    assertEqual(card._metaAttributes('media_player.heos_hallen').media_title, 'Rix FM');
+  });
+
+  // ---------------------------------------------------------------------
+  // Card: transport routing + button capability
+  // ---------------------------------------------------------------------
+  test('Transport targets the HEOS entity for a radio room', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_hallen', name: 'Hallen' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    const { hass, calls } = fakeHass({
+      states: { 'media_player.heos_hallen': { state: 'playing', attributes: { group_members: ['media_player.heos_hallen'], supported_features: 4096 } } },
+    });
+    card.hass = hass;
+    card._focusedGroupId = 'media_player.heos_hallen';
+    card._onTransport('next');
+    assertEqual(calls[0].service, 'media_next_track');
+    assertEqual(calls[0].target.entity_id, 'media_player.heos_hallen');
+  });
+
+  test('Transport targets mass_entity once Music Assistant is driving', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_kok', name: 'Köket', mass_entity: 'media_player.mass_kok' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    const { hass, calls } = fakeHass({
+      states: {
+        'media_player.heos_kok': { state: 'playing', attributes: { group_members: ['media_player.heos_kok'] } },
+        'media_player.mass_kok': { state: 'playing', attributes: { supported_features: 16385 } },
+      },
+    });
+    card.hass = hass;
+    card._focusedGroupId = 'media_player.heos_kok';
+    card._onTransport('next');
+    assertEqual(calls[0].target.entity_id, 'media_player.mass_kok');
+  });
+
+  test('Double-firing a transport click within the guard window sends exactly one call', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_hallen', name: 'Hallen' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    const { hass, calls } = fakeHass({
+      states: { 'media_player.heos_hallen': { state: 'playing', attributes: { group_members: ['media_player.heos_hallen'], supported_features: 4096 } } },
+    });
+    card.hass = hass;
+    card._focusedGroupId = 'media_player.heos_hallen';
+    card._onTransport('next');
+    card._onTransport('next');
+    assertEqual(calls.filter((c) => c.service === 'media_next_track').length, 1);
+  });
+
+  test('Play/Pause button: PAUSE supported -> play_pause', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_kok', name: 'Köket', mass_entity: 'media_player.mass_kok' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    card.hass = fakeHass({
+      states: {
+        'media_player.heos_kok': { state: 'playing', attributes: { group_members: ['media_player.heos_kok'] } },
+        'media_player.mass_kok': { state: 'playing', attributes: { supported_features: 16385 } }, // PLAY+PAUSE
+      },
+    }).hass;
+    card._focusedGroupId = 'media_player.heos_kok';
+    card._render();
+    const cmd = card.shadowRoot.querySelector('.tbtn-main').dataset.cmd;
+    assertEqual(cmd, 'play_pause');
+  });
+
+  test('Play/Pause button: playing without PAUSE support -> falls back to Stop', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_hallen', name: 'Hallen' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    card.hass = fakeHass({
+      states: { 'media_player.heos_hallen': { state: 'playing', attributes: { group_members: ['media_player.heos_hallen'], supported_features: 4096 } } }, // STOP only
+    }).hass;
+    card._focusedGroupId = 'media_player.heos_hallen';
+    card._render();
+    const sr = card.shadowRoot;
+    assertEqual(sr.querySelector('.tbtn-main').dataset.cmd, 'stop');
+    assertEqual(sr.querySelectorAll('.hero-transport .tbtn').length, 3, 'no duplicate separate Stop button expected');
+  });
+
+  test('Play/Pause button: idle without PAUSE support -> Play calls media_play, not media_play_pause', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_hallen', name: 'Hallen' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    const { hass, calls } = fakeHass({
+      states: { 'media_player.heos_hallen': { state: 'idle', attributes: { group_members: ['media_player.heos_hallen'], supported_features: 4096 } } },
+    });
+    card.hass = hass;
+    card._focusedGroupId = 'media_player.heos_hallen';
+    card._render();
+    const cmd = card.shadowRoot.querySelector('.tbtn-main').dataset.cmd;
+    assertEqual(cmd, 'play');
+    card._onTransport(cmd);
+    assertEqual(calls[0].service, 'media_play');
+  });
+
+  // ---------------------------------------------------------------------
+  // Card: grouping / solo-room handling
+  // ---------------------------------------------------------------------
+  test('_computeGroups marks a solo playing room as isSolo: true', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_hallen', name: 'Hallen' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    card.hass = fakeHass({
+      states: { 'media_player.heos_hallen': { state: 'playing', attributes: { group_members: ['media_player.heos_hallen'] } } },
+    }).hass;
+    const groups = card._computeGroups();
+    assertEqual(groups.length, 1);
+    assertEqual(groups[0].isSolo, true);
+  });
+
+  test('_computeGroups marks a real 2+ member HEOS group as isSolo: false', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [
+        { entity: 'media_player.heos_kok', name: 'Köket' },
+        { entity: 'media_player.heos_matplatsen', name: 'Matplatsen' },
+      ],
+      favorites: { spotify: [], radio: [] },
+    });
+    const members = ['media_player.heos_kok', 'media_player.heos_matplatsen'];
+    card.hass = fakeHass({
+      states: {
+        'media_player.heos_kok': { state: 'playing', attributes: { group_members: members } },
+        'media_player.heos_matplatsen': { state: 'playing', attributes: { group_members: members } },
+      },
+    }).hass;
+    const groups = card._computeGroups();
+    assertEqual(groups.length, 1);
+    assertEqual(groups[0].isSolo, false);
+  });
+
+  test('Tapping a solo playing room\'s own tile clears focus without any service call (regression: used to call invalid unjoin)', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_hallen', name: 'Hallen' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    const { hass, calls } = fakeHass({
+      states: { 'media_player.heos_hallen': { state: 'playing', attributes: { group_members: ['media_player.heos_hallen'] } } },
+    });
+    card.hass = hass;
+    card._focusedGroupId = 'media_player.heos_hallen';
+    card._onRoomTap('media_player.heos_hallen');
+    assertEqual(calls.length, 0);
+    assertEqual(card._focusedGroupId, null);
+  });
+
+  test('Issue #7 check: a solo playing room appears as its own chip in the Active Groups strip', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_hallen', name: 'Hallen' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    card.hass = fakeHass({
+      states: { 'media_player.heos_hallen': { state: 'playing', attributes: { group_members: ['media_player.heos_hallen'] } } },
+    }).hass;
+    card._render();
+    const chips = card.shadowRoot.querySelectorAll('.groups-strip .chip:not(.chip-new)');
+    assertEqual(chips.length, 1, 'expected one chip for the solo playing room');
+    assertTrue(chips[0].textContent.includes('Hallen'), 'expected the chip to show the room name');
+  });
+
+  // ---------------------------------------------------------------------
+  // Card: volume/mute always stay on the HEOS entity
+  // ---------------------------------------------------------------------
+  test('Group volume always targets the HEOS entity, even while Music Assistant is driving', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_kok', name: 'Köket', mass_entity: 'media_player.mass_kok' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    const { hass, calls } = fakeHass({
+      states: {
+        'media_player.heos_kok': { state: 'playing', attributes: { group_members: ['media_player.heos_kok'] } },
+        'media_player.mass_kok': { state: 'playing', attributes: {} },
+      },
+    });
+    card.hass = hass;
+    card._focusedGroupId = 'media_player.heos_kok';
+    card._setGroupVolume(55);
+    assertEqual(calls[0].service, 'group_volume_set');
+    assertEqual(calls[0].target.entity_id, 'media_player.heos_kok');
+  });
+
+  // ---------------------------------------------------------------------
+  // Card: Up Next — correct backend, correct cache invalidation
+  // ---------------------------------------------------------------------
+  test('Up Next uses music_assistant.get_queue when Music Assistant is driving', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_kok', name: 'Köket', mass_entity: 'media_player.mass_kok' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    const { hass, messages } = fakeHass({
+      states: {
+        'media_player.heos_kok': { state: 'playing', attributes: { group_members: ['media_player.heos_kok'], media_title: 'Url Stream' } },
+        'media_player.mass_kok': { state: 'playing', attributes: { media_title: 'Här kommer solen' } },
+      },
+      sendMessageImpl: (msg) =>
+        Promise.resolve({ response: { 'media_player.mass_kok': { next_item: { name: 'Sommaren är kort', media_item: { artists: [{ name: 'Håkan Hellström' }] } } } } }),
+    });
+    card.hass = hass;
+    card._focusedGroupId = 'media_player.heos_kok';
+    card._render();
+    await wait(20);
+    const usedMassQueue = messages.some((m) => m.domain === 'music_assistant' && m.service === 'get_queue');
+    assertTrue(usedMassQueue, 'expected a music_assistant.get_queue call');
+    const upNext = card.shadowRoot.querySelector('.hero-nextup span')?.textContent || '';
+    assertTrue(upNext.includes('Sommaren är kort'), 'expected the real next track title');
+  });
+
+  test('Up Next uses heos.get_queue for a radio room', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_hallen', name: 'Hallen' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    const { hass, messages } = fakeHass({
+      states: { 'media_player.heos_hallen': { state: 'playing', attributes: { group_members: ['media_player.heos_hallen'], media_title: 'Rix FM' } } },
+      sendMessageImpl: () => Promise.resolve({ response: { 'media_player.heos_hallen': { queue: [{ song: 'current' }, { song: 'Next Song', artist: 'Next Artist' }] } } }),
+    });
+    card.hass = hass;
+    card._focusedGroupId = 'media_player.heos_hallen';
+    card._render();
+    await wait(20);
+    const usedHeosQueue = messages.some((m) => m.domain === 'heos' && m.service === 'get_queue');
+    assertTrue(usedHeosQueue, 'expected a heos.get_queue call');
+  });
+
+  // ---------------------------------------------------------------------
+  // Card: security — escaping
+  // ---------------------------------------------------------------------
+  test('A malicious room name never produces a real DOM element from the injected markup', async () => {
+    const card = freshCard();
+    card.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_hallen', name: '<img src=x onerror="window.__pwned=true">' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    card.hass = fakeHass({ states: { 'media_player.heos_hallen': { state: 'idle', attributes: {} } } }).hass;
+    card._render();
+    assertTrue(!window.__pwned, 'escHtml must have neutralized the payload');
+    assertEqual(card.shadowRoot.querySelectorAll('.tile-name img').length, 0, 'no real <img> should have been created');
+  });
+
+  // ---------------------------------------------------------------------
+  // Editor: room fields, favorites split, browse routing
+  // ---------------------------------------------------------------------
+  test('Editor renders a Music Assistant entity picker per room', async () => {
+    const editor = freshEditor();
+    editor.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_kok', name: 'Köket', mass_entity: 'media_player.mass_kok' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    editor.hass = fakeHass({}).hass;
+    assertEqual(editor.shadowRoot.querySelectorAll('.room-block').length, 1);
+    assertEqual(editor.shadowRoot.querySelectorAll('ha-entity-picker[data-field="mass_entity"]').length, 1);
+  });
+
+  test('Editor favorites are two independent fav-source blocks (Spotify, Radio)', async () => {
+    const editor = freshEditor();
+    editor.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_kok', name: 'Köket', mass_entity: 'media_player.mass_kok' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    editor.hass = fakeHass({}).hass;
+    const titles = Array.from(editor.shadowRoot.querySelectorAll('.fav-source-title')).map((el) => el.textContent);
+    assertDeepEqual(titles, ['Spotify', 'Radio']);
+  });
+
+  test('Editor: Spotify browse targets mass_entity, Radio browse targets the HEOS entity', async () => {
+    const editor = freshEditor();
+    editor.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_kok', name: 'Köket', mass_entity: 'media_player.mass_kok' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    const { hass, messages } = fakeHass({});
+    editor.hass = hass;
+    await editor._startBrowse('spotify');
+    await editor._startBrowse('radio');
+    assertEqual(messages[0].entity_id, 'media_player.mass_kok');
+    assertEqual(messages[1].entity_id, 'media_player.heos_kok');
+  });
+
+  test('Editor: Spotify browse auto-drills into "Playlists"', async () => {
+    const editor = freshEditor();
+    editor.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_kok', name: 'Köket', mass_entity: 'media_player.mass_kok' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    editor.hass = fakeHass({
+      sendMessageImpl: (msg) => {
+        if (!msg.media_content_id) {
+          return Promise.resolve({ title: 'root', children: [{ title: 'Playlists', media_content_id: 'playlists', can_expand: true, can_play: false }] });
+        }
+        return Promise.resolve({ title: 'Playlists', children: [{ title: 'God morgon', media_content_type: 'playlist', media_content_id: 'spotify:playlist:abc', can_expand: true, can_play: true }] });
+      },
+    }).hass;
+    await editor._startBrowse('spotify');
+    const rows = Array.from(editor.shadowRoot.querySelectorAll('.browse-row')).map((r) => r.querySelector('.browse-title')?.textContent);
+    assertDeepEqual(rows, ['God morgon']);
+  });
+
+  test('Editor: a browsable + playable row (Spotify playlist) shows both a checkbox and a drill-in control', async () => {
+    const editor = freshEditor();
+    editor.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_kok', name: 'Köket', mass_entity: 'media_player.mass_kok' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    editor.hass = fakeHass({
+      sendMessageImpl: () => Promise.resolve({ title: 'root', children: [{ title: 'God morgon', media_content_type: 'playlist', media_content_id: 'spotify:playlist:abc', can_expand: true, can_play: true }] }),
+    }).hass;
+    await editor._startBrowse('spotify');
+    const row = editor.shadowRoot.querySelector('.browse-row');
+    assertTrue(!!row.querySelector('input[type=checkbox]'), 'expected a checkbox');
+    assertTrue(!!row.querySelector('.browse-drill-btn'), 'expected a drill-in button');
+  });
+
+  test('Editor: adding a selected Spotify playlist lands only in favorites.spotify', async () => {
+    const editor = freshEditor();
+    editor.setConfig({
+      type: 'custom:music-multiroom-card',
+      rooms: [{ entity: 'media_player.heos_kok', name: 'Köket', mass_entity: 'media_player.mass_kok' }],
+      favorites: { spotify: [], radio: [] },
+    });
+    editor.hass = fakeHass({
+      sendMessageImpl: () => Promise.resolve({ title: 'root', children: [{ title: 'God morgon', media_content_type: 'playlist', media_content_id: 'spotify:playlist:abc', can_expand: true, can_play: true }] }),
+    }).hass;
+    await editor._startBrowse('spotify');
+    editor._browse.spotify.selected.add('spotify:playlist:abc');
+    editor._addSelectedFavorites('spotify');
+    assertEqual(editor._config.favorites.spotify.length, 1);
+    assertEqual(editor._config.favorites.radio.length, 0);
+  });
+
+  // ---------------------------------------------------------------------
+  // Run everything, render results
+  // ---------------------------------------------------------------------
+  const resultsEl = document.getElementById('results');
+  const summaryEl = document.getElementById('summary');
+  let passCount = 0;
+  let failCount = 0;
+
+  for (const { name, fn } of cases) {
+    const li = document.createElement('li');
+    try {
+      await fn();
+      passCount++;
+      li.className = 'pass';
+      li.textContent = `✓ ${name}`;
+    } catch (err) {
+      failCount++;
+      li.className = 'fail';
+      li.innerHTML = `✗ ${name}<span class="err"></span>`;
+      li.querySelector('.err').textContent = err.stack || String(err);
+      console.error(`FAIL: ${name}`, err);
+    }
+    resultsEl.appendChild(li);
+  }
+
+  summaryEl.className = `summary ${failCount === 0 ? 'pass' : 'fail'}`;
+  summaryEl.textContent = `${passCount}/${cases.length} passed` + (failCount ? ` — ${failCount} FAILED` : '');
+  window.__testSummary = { total: cases.length, passed: passCount, failed: failCount };
+  console.log(`music-multiroom-card tests: ${passCount}/${cases.length} passed`);
+})();
+</script>
+</body>
+</html>

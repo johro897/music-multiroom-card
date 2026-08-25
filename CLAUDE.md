@@ -6,13 +6,20 @@ Full-page Lovelace-kort för multi-room ljudstyrning, byggt mot HA:s generiska
 features.
 
 **Uppströmsberoende:** Home Assistants inbyggda `heos`-integration
-(bygger på `pyheos`). Inget annat tredjepartsberoende. Kortet är byggt och
-TESTAT mot HEOS specifikt — även om join/unjoin/play_media tekniskt är
-generiska `media_player`-tjänster som även Sonos/Bluesound implementerar,
-görs INGEN kompatibilitetsutfästelse för andra plattformar (borttaget
-2026-08-23 på ägarens begäran — "vi anger att vi testar med HEOS för att
-inte lova för mycket"). Om kortet råkar fungera mot en annan plattform är
-det en bonus, inte ett designmål eller något som testas.
+(bygger på `pyheos`) för allt utom Spotify. Kortet är byggt och TESTAT mot
+HEOS specifikt — även om join/unjoin/play_media tekniskt är generiska
+`media_player`-tjänster som även Sonos/Bluesound implementerar, görs INGEN
+kompatibilitetsutfästelse för andra plattformar (borttaget 2026-08-23 på
+ägarens begäran — "vi anger att vi testar med HEOS för att inte lova för
+mycket"). Om kortet råkar fungera mot en annan plattform är det en bonus,
+inte ett designmål eller något som testas.
+
+**Sedan `0.7.0`:** ett andra, VALFRITT uppströmsberoende — **Music
+Assistant** (separat server/add-on, egen HEOS player-provider som pratar
+direkt med HEOS över LAN, inte via HA:s `heos`-integration) — men BARA för
+rum som konfigurerat `mass_entity`, och BARA för Spotify-favoriter. Se
+"Music Assistant-integrationen (Spotify)" nedan för hela bakgrunden och
+`README.md` för options-tabellen.
 
 ## Bakgrund / design
 
@@ -154,6 +161,10 @@ HEOS-installation eftersom källkoden inte visar allt (t.ex. exakta
    [#2](https://github.com/johro897/music-multiroom-card/issues/2));
    `state` är bara `playing`/`paused`/`idle` (aldrig `off`) — bekräftar
    att `_computeGroups()`s `isActive`-koll redan täcker allt relevant.
+   **Bekräftat `0.7.2`→`0.7.3`:** `PAUSE`-stöd (bit `1`) varierar per
+   källa — radiokällor rapporterar bara `STOP` (bit `4096`), inte
+   `PAUSE`; Spotify-spår (via MA) rapporterar båda. Anta aldrig att
+   `PAUSE` finns bara för att `STOP` gör det.
    HA:s separata Spotify-integration bekräftat ORELATERAD (kan inte
    starta uppspelning på enheter Spotifys API inte redan känner till) —
    det ursprungliga designvalet att bara luta sig mot HEOS egen Spotify
@@ -163,14 +174,15 @@ HEOS-installation eftersom källkoden inte visar allt (t.ex. exakta
    Bekräftat via källkod: `get_queue` har `supports_response=ONLY` och
    returnerar `{queue: [...]}` där varje objekt är en `pyheos.QueueItem`
    (`song`/`artist`/`album`/`image_url`/`media_id`/`album_id`/`queue_id`).
-   **Obekräftat:** `_refreshNextTrack()` antar att `queue[0]` är den just
-   nu spelande låten och `queue[1]` är "next" — `QueueItem` saknar ett
-   explicit "is_current"-fält i källkoden för att bekräfta detta
-   positionellt. Om antagandet är fel visas fel låt (eller ingen) i
-   "Up next"-raden — provkör mot en riktig kö innan detta litas på fullt
-   ut. Felaktigt/tomt svar hanteras redan tyst (ingen toast, bara ingen
-   rad visas), så en felaktig gissning här är kosmetisk, inte trasig
-   funktionalitet.
+   **Obekräftat, gäller numera bara HEOS/radio-vägen** (se `0.7.4` nedan
+   för Spotify-vägen, som inte har det här problemet alls):
+   `_refreshNextTrack()` antar att `queue[0]` är den just nu spelande
+   låten och `queue[1]` är "next" — `QueueItem` saknar ett explicit
+   "is_current"-fält i källkoden för att bekräfta detta positionellt. Om
+   antagandet är fel visas fel låt (eller ingen) i "Up next"-raden —
+   provkör mot en riktig kö innan detta litas på fullt ut. Felaktigt/tomt
+   svar hanteras redan tyst (ingen toast, bara ingen rad visas), så en
+   felaktig gissning här är kosmetisk, inte trasig funktionalitet.
 8. **Progress-baren (`0.6.1`, [#1](https://github.com/johro897/music-multiroom-card/issues/1)).**
    HEOS stödjer inte seek (se punkt 6) — baren är alltid ren visning.
    Obekräftat om HEOS faktiskt populerar `media_position`/
@@ -178,6 +190,28 @@ HEOS-installation eftersom källkoden inte visar allt (t.ex. exakta
    har typiskt ingen duration, vilket redan hanteras genom att baren
    bara döljs) — provkör mot en riktig Spotify-låt/HEOS-favorit live för
    att se att den faktiskt ritas och tickar rätt.
+9. **Spotify-via-MA (`0.7.0`, [#9](https://github.com/johro897/music-multiroom-card/issues/9)).**
+   - ~~Om `play_media` mot ett rums `mass_entity` faktiskt spelar ut över
+     HELA en HEOS-grupp som formats via native `heos.join`~~ **BEKRÄFTAT
+     LIVE (2026-08-23):** ägaren grupperade fyra rum via kortet (native
+     HEOS) och spelade en Spotify-favorit — hero-badgen visade "Playing
+     on: Hallen, Matplatsen, Lounge, Köket", alla fyra. Antagandet höll:
+     gruppering är fysiskt HEOS-tillstånd, och att spela mot `mass_entity`
+     för ledaren räcker för att hela den fysiska gruppen ska spela, oavsett
+     att MA:s egen "Sync Group Player"-provider också finns.
+   - ~~Music Assistants `browse_media`-svarsform för Spotify-innehåll~~
+     **DELVIS BEKRÄFTAT LIVE (2026-08-23):** till skillnad från allt som
+     observerats från HEOS, där ett objekt antingen är bläddringsbart
+     (`can_expand`) ELLER spelbart, är en Spotify-spellista i MA:s träd
+     BÅDA SAMTIDIGT — `can_expand: true` (dess låtar) OCH `can_play: true`
+     (spellistan i sin helhet). Ägaren kunde inte lägga till en spellista
+     alls med den ursprungliga bläddraren — den antog att `can_expand`
+     alltid uteslöt att raden var direkt valbar, så en spellista visade
+     bara pil-in-i-listan, aldrig en kryssruta. Fixat: varje rad visar nu
+     OBEROENDE en kryssruta (om `can_play !== false`) OCH en
+     bläddra-in-knapp (om `can_expand`), inte längre ett antingen/eller.
+     Fortfarande obekräftat: exakt trädform djupare än
+     Artists/Albums/Tracks/Playlists/Radio stations-roten.
 
 **Ihågkom vid ändring av `_isDirty()`:** `media_position`/`media_duration`/
 `media_position_updated_at` läggs MEDVETET INTE till i den bevakade
@@ -192,12 +226,12 @@ före/efter en tick, `_render()`-räknaren ökar INTE.
 **Status efter 0.5.3 (bekräftat av ägaren 2026-08-23):** avgruppering av
 högtalare som ursprungligen grupperades via HEOS-appen fungerar nu, och
 2-enheters-taket/`System error -9` är borta — båda var alltså sekundära
-symptom av join-buggen, inte egna buggar. **Fortfarande öppet:** en enda
-(icke-grupperad) högtalare som spelar solo visas inte som en "grupp om 1"
-i Active Groups-raden. Felsökning påbörjad men inte klar — nästa steg är
-att bekräfta om rums-plattan i "Rooms"-griden själv visar "Playing" för
-en sådan högtalare (skiljer på om `state === 'playing'`-detekteringen
-eller bara chip-renderingen är trasig); väntar på svar från ägaren.
+symptom av join-buggen, inte egna buggar. ~~Fortfarande öppet: en enda
+(icke-grupperad) högtalare som spelar solo visas inte som en "grupp om
+1" i Active Groups-raden~~ **STÄNGT (`beta-0.7.6`, issue #7): reproducerar
+inte.** Ett regressionstest bekräftar att en soloframträdande högtalare
+visas korrekt som sin egen chip med nuvarande kod — se
+"Kritisk helhetsgranskning"-sektionen längre ner för detaljer.
 
 Enligt paraply-CLAUDE.mds release-rutin är det första `beta-0.1.0`-taggen
 som är den faktiska verifieringsvägen för allt ovan — inte något som görs
@@ -205,6 +239,335 @@ separat innan kodning. Uppdatera denna sektion med vad som faktiskt
 observerades så fort testet är kört, oavsett om antagandena stämde eller
 inte (mönster: se t.ex. `tplink-switch-card/CLAUDE.md`s
 "Kräver manuell verifiering"-sektion).
+
+## Music Assistant-integrationen (Spotify) — bakgrund och fynd
+
+**Varför HEOS egen Spotify-hantering aldrig kunde lösa detta:** research
+och live-testning (2026-08-22/23, innan `0.7.0` byggdes) bekräftade att
+HEOS App:s "Spotify"-musikkälla bara exponerar vad som redan synkats in i
+HEOS EGET bibliotek — aldrig riktig live-uppspelning från det faktiskt
+länkade Spotify-kontot. HA:s separata `spotify`-integration är också
+orelaterad (kan bara "ta över" en enhet som redan är synlig i Spotifys
+moln-API, vilket kräver en lokal Zeroconf-handskakning HEOS-högtalare
+aldrig gör med en server-baserad klient). Music Assistants Spotify-
+provider (`librespot`) löser det genom att logga in med det riktiga
+kontot och avkoda ljudet direkt, sedan skicka en vanlig ljudström till
+HEOS via MA:s HEOS-provider — bekräftat via HEOS-appens egen visning av
+"URL Stream" som aktiv källa (exakt det MA:s egna dokumentation beskriver:
+metadata visas som "URL stream" pga API-begränsningar, inte HEOS egen
+Spotify-session).
+
+**Docker-driftsättning:** `docker-compose`-stack för `ghcr.io/music-
+assistant/server`, `network_mode: host` (obligatoriskt enligt MA:s egen
+dokumentation — mDNS/UPnP-upptäckt fungerar inte över bridge-nätverk),
+data på `/srv/homeautomation/musicassistant:/data`, healthcheck via
+`python3`-socket-check istället för curl/wget (finns inte i imagen,
+bekräftat från `Dockerfile.base`).
+
+**Felsökningssaga (2026-08-23), i ordning — värt att känna till om
+liknande symptom dyker upp igen:**
+
+1. **Kontroller-anslutningen failade periodvis** med `System error -519
+   (12)`. Avkodat från `pyheos`s faktiska källkod: formatet är
+   `"{text} ({error_id})"` där `error_id`(`eid`) är HEOS-protokollets
+   EGNA generiska felkod (12 = "System Error", samma kod som det tidigare
+   "-9 (12)"-felet i det ursprungliga kortprojektet) och `text` innehåller
+   ett internt `syserrno` från HEOS-enhetens egen inbäddade mjukvara
+   (`-519`, inte ett vanligt Linux-errno — odokumenterat internt
+   Denon-kod). Grundorsak: den specifika enheten (Hallen) hade suttit i
+   ett fastlåst tillstånd efter att MA gjort massvis av snabba
+   tvångs-avgrupperingar (`set_members`) mot den. **Fix: strömcykla den
+   berörda HEOS-enheten fysiskt.** Löste sig helt efter omstart av
+   enheten — inget kvarvarande MA-konfigurationsproblem.
+2. **Uppspelning startade ("URL Stream" i HEOS-appen) men gav inget
+   ljud, helt utan fel i loggen — på FLERA olika HEOS-enheter OCH på en
+   Cast/AirPlay-soundbar.** Uteslutet i tur och ordning: fel ljudformat
+   (testat FLAC och MP3), VLAN-segmentering (bekräftat samma VLAN), Wi-Fi
+   client isolation (den drabbade enheten satt på Ethernet), dubbel
+   kontroll (samma resultat med native `heos`-integrationen avstängd),
+   DNS-filter/adblock (inget sådant kört), MA:s egen ström-pipeline (MA:s
+   inbyggda webbspelare fungerade perfekt — bevisade att grundläggande
+   ljudgenerering/ffmpeg var friskt). **Verklig grundorsak, bevisad med
+   `tcpdump`:** värdens brandvägg (`ufw`) hade bara `8095/tcp`
+   (webb-UI:t) explicit öppnad — inte `8097/tcp` (MA:s streamserver) eller
+   `8927/tcp` (Sendspin, används för Cast/AirPlay-bryggor). `nc`-testet
+   som INITIALT verkade bekräfta att porten var nåbar var en falsk
+   positiv — det kördes från samma fysiska maskin som Docker-värden, ett
+   effektivt loopback-test som `ufw` inte filtrerar, medan riktig extern
+   LAN-trafik (från högtalarna) tystades helt (SYN skickades upprepade
+   gånger med TCP:s vanliga backoff-mönster, aldrig ett SYN-ACK tillbaka).
+   **Fix:** `sudo ufw allow 8097/tcp` + `sudo ufw allow 8927/tcp`.
+   **Läxa för framtida liknande felsökning:** ett lyckat `nc`/`telnet`-
+   test FRÅN samma maskin som servern bevisar ingenting om extern
+   nåbarhet — testa alltid från en riktig ANNAN enhet på nätverket, eller
+   verifiera med `tcpdump` på servern att paket faktiskt kommer in
+   utifrån.
+3. Ett tredje, orelaterat AirPlay-fel (`60" Crystal UHD` TV) visade sig
+   vara en helt mundan parkopplings-fråga (AirPlay 2 kräver PIN-inmatning
+   i MA:s webbgränssnitt) — inte kopplat till ovanstående alls, värt att
+   inte blanda ihop symptomen om det dyker upp igen.
+
+**Två fynd från `beta-0.7.1`/`beta-0.7.2`-testningen (2026-08-23), båda
+fixade samma dag:**
+
+- **HEOS-entiteten rapporterar bokstavligen `media_title`/`media_artist:
+  "Url Stream"`** för allt som MA skickar dit — bekräftat live (matchar
+  MA:s egen dokumentation om metadata-begränsningen). Hero:t läste bara
+  från den fokuserade ledarens HEOS-entitet, så en Spotify-låt visade
+  "Url Stream" istället för riktig titel/artist, och progress-baren
+  saknades helt (HEOS-entiteten saknar också giltig
+  `media_position`/`media_duration` för MA-källor). Fixat med en ny
+  `_metaAttributes()`-hjälpmetod: om rummets `mass_entity` själv är
+  `playing`, används DESS attribut för titel/artist/bild/position/
+  duration istället för HEOS-entitetens — men `state`/
+  `supported_features` (vad som styr transportknapparnas synlighet)
+  förblir alltid HEOS-entitetens, eftersom det är dit kommandona faktiskt
+  skickas. `_watchedEntities()` bevakar nu även varje rums `mass_entity`
+  (inte bara `entity`), annars skulle ett låtbyte i MA aldrig trigga en
+  omritning eftersom det inte rör HEOS-entitetens egna attribut alls.
+- **Bläddrings-picker för Spotify öppnade på MA:s rot-meny**
+  (Artists/Albums/Tracks/Playlists/Radio stations/Podcasts) — ingen
+  favorit på ett multiroom-kort är rimligen en enskild artist eller ett
+  helt album. Fixat: `_startBrowse('spotify')` borrar nu automatiskt in i
+  "Playlists" (matchat på titel, hittat bland rot-barnen) direkt efter
+  rot-anropet, med rot-nivån kvar en nivå bakåt via "Back" om man ändå
+  vill åt något annat. Radiobläddringen (HEOS) är oförändrad — dess
+  rot-nivå (alla musikkällor platt) var redan direkt användbar.
+
+**Tre fynd från riktig daglig användning av `beta-0.7.2` (2026-08-23,
+inte skriptad testning den här gången), alla fixade samma dag:**
+
+- **Radio-uppspelning kunde inte pausas** — `Entity media_player.hallen
+  does not support action media_player.media_play_pause` i loggen. Nytt
+  bekräftat API-faktum: till skillnad från Spotify-spår stödjer HEOS
+  radiokällor inte `PAUSE` (bit `1`) alls, bara `STOP` (bit `4096`) —
+  rimligt, en direktsänd ström går inte att "återuppta från samma
+  ställe". HA:s tjänstevalidering blockerar `media_play_pause`-anrop mot
+  entiteter som inte deklarerar stöd för det, INNAN anropet ens når
+  HEOS. Fixat: huvudknappen faller tillbaka till att bete sig som Stop
+  (`media_stop`) när `PAUSE` saknas men `STOP` finns — den separata
+  Stop-knappen döljs då för att undvika dubblett.
+- **Paus under Spotify-uppspelning återställde titeln till "Url
+  Stream"** — `_metaAttributes()`s villkor kollade bara `massSt.state
+  === 'playing'`; en pausning flyttar även `mass_entity` till `paused`,
+  vilket gjorde att villkoret slog av och föll tillbaka till HEOS
+  entitetens skräp-metadata. Fixat: villkoret tillåter nu både
+  `playing` OCH `paused`.
+- **Tryck på ett soloframträdande, redan fokuserat rums egen platta**
+  kunde kasta `Entity media_player.hallen is not joined to a group` —
+  `_computeGroups()` klassar ett soloSpelande/pausat rum som sin egen
+  "grupp om 1" enbart för fokus-/UI-syften (se punkt 8 om samma
+  öppna fråga i Active Groups-raden, [#7](https://github.com/johro897/music-multiroom-card/issues/7)),
+  men HEOS har ALDRIG faktiskt grupperat entiteten — ett riktigt `join`
+  har aldrig skett. `_onRoomTap()`s "owning"-gren anropade ändå `unjoin`
+  blint. Fixat: om `owning.memberEntities.length < 2` (ingen riktig
+  HEOS-grupp) rensas bara fokus lokalt, inget tjänsteanrop görs alls.
+
+**Två fynd från `beta-0.7.3`-testningen (2026-08-23), `beta-0.7.4`:**
+
+- **`Reached skip limit (17)` vid vad ägaren upplevde som ETT enda
+  Next-tryck.** Utredning tillsammans med ägaren: Spotifys skip-gräns
+  gäller historiskt bara framåt-skip (aldrig bakåt) — matchar att
+  Previous fungerade — så en riktig Spotify-gräns var fortfarande
+  troligt en del av förklaringen. MEN: en verklig kodlucka hittades
+  också — `_onTransport()` (Next/Prev/Play/Pause/Stop) saknade det
+  `_guardPending()`-dubbeltrycksskydd som `_onRoomTap()` redan hade.
+  Om en pekskärm någon gång dubbelfyrar ett fysiskt tryck till två
+  click-events (känt beteende på vissa kiosk-webbläsare) hade kortet
+  skickat kommandot två gånger utan att ägaren märkt det — vilket över
+  en dags testande kan ackumulera mot en gräns mycket snabbare än
+  antalet upplevda tryck antyder. Fixat: samma `_guardPending()`-mönster
+  applicerat på `_onTransport()`, nyckel `transport:${entity}:${cmd}`.
+  **Inte bekräftat som DEN faktiska orsaken** till just "17" — bara en
+  verklig, tidigare oskyddad kodväg som nu är åtgärdad oavsett.
+- **"Up next" visade "Url Stream — Url Stream" för Spotify-innehåll**
+  — samma grundorsak som titel/artist-buggen: `heos.get_queue` frågar
+  HEOS EGEN kö, som för MA-drivet innehåll bara känner till en generisk
+  URL-ström. Ägaren frågade uttryckligen "finns inte detta från MA?" —
+  och det gjorde det: `music_assistant.get_queue` är en riktig, egen
+  tjänst i HA cores `music_assistant`-integration, bekräftat från
+  källkoden (`homeassistant/components/music_assistant/media_player.py`,
+  `_async_handle_get_queue`) — returnerar ett explicit `next_item`-fält
+  (`{name, duration, media_item: {name, artists: [{name}], album, ...}}`,
+  bekräftat från `schemas.py`s `queue_item_dict_from_mass_item`/
+  `media_item_dict_from_mass_item`), INGEN positionsgissning som HEOS
+  egen `queue[1]`-variant. Fixat: en ny delad `_massDrivingEntity()`-
+  metod (samma villkor som redan fanns i `_metaAttributes()`, nu
+  refaktorerad till att använda den gemensamma metoden istället för att
+  duplicera logiken) avgör vilken backend som styr rummet just nu;
+  `_refreshNextTrack()` frågar rätt tjänst beroende på svaret. Löste
+  också en följdbugg: `nextKey`-cachen nycklades på HEOS-entitetens EGNA
+  `media_title` (konstant "Url Stream" för Spotify), så cachen skulle
+  aldrig ogiltigförklaras mellan olika låtar — nycklas nu på
+  `_metaAttributes()`s (riktiga) titel istället.
+
+**`beta-0.7.5` (2026-08-23) — två fynd till, det andra en verklig
+arkitekturändring gjord tillsammans med ägaren, inte bara en bugg:**
+
+- **Efter Stop kunde Play inte startas om på radio** —
+  `Entity ... does not support action media_player.media_play_pause`,
+  två gånger i loggen, vid ett Play-tryck (inte Pause). `0.7.3`s fix var
+  ofullständig: den löste bara fallet "spelar + ingen Pause-stöd → visa
+  Stop", men när entiteten går till `idle` efter ett Stop faller
+  huvudknappen tillbaka till `play_pause` igen (eftersom
+  `mainUsesStop`-villkoret kräver `isPlaying`) — och `media_play_pause`
+  failar tydligen OAVSETT riktning på en entitet utan `PAUSE`-stöd, inte
+  bara när den skulle resultera i en paus. Fixat: undvik
+  `media_play_pause` helt när `PAUSE` saknas — anropa `media_stop`
+  respektive `media_play` explicit istället, aldrig den kombinerade
+  tjänsten.
+- **`Reached skip limit` vid Next via kortet, men fungerade problemfritt
+  när ägaren körde `media_next_track` DIREKT mot MA-entiteten** (inte
+  via kortet). Det här motbevisar att det bara var en riktig
+  Spotify-kontogräns (som skulle gälla oavsett vilken entitet kommandot
+  går via) — pekar istället mot att HEOS→MA-relät för transportkommandon
+  beter sig annorlunda (sämre) än att prata med MA direkt, av okänd
+  anledning (fler underliggande anrop? omsynk räknas som skip? inte
+  utrett djupare). Ägarens beslut, efter diskussion: **när MA styr ett
+  rum ska ALLA transportkommandon gå direkt till MA**, inte reläas via
+  HEOS. Två uttryckliga avgränsningar bekräftade med ägaren (inte
+  antagna): (1) gruppering/join-unjoin stannar på HEOS oavsett — inget
+  MA-motsvarighet finns för att styra fysisk HEOS-gruppering; (2) all
+  volym (grupp + per-rum) och mute stannar på HEOS oavsett — MA har
+  ingen motsvarighet till att styra volymen för en hel fysiskt
+  HEOS-grupperad klunga högtalare, bara sin egen enhet.
+
+  Implementerat som en ny delad `_driveEntity(leaderEntity)` — returnerar
+  `mass_entity` om MA styr (samma villkor som `_massDrivingEntity()`,
+  som den nu bygger vidare på), annars HEOS-entiteten. Används nu
+  konsekvent av: `_onTransport()` (mål-entitet för Next/Prev/Play/Pause/
+  Stop), `_renderHero()`s `st`/`isPlaying`/`isPaused`/`features` (så att
+  Play/Pause-knappens utseende och vilka kommandon som visas som
+  tillgängliga också läses från rätt entitet — beslutat med ägaren,
+  inte antaget), `_tickProgress()`, och `_metaAttributes()` (nu bara en
+  tunn wrapper kring `_driveEntity()`). `_guardPending()`-nyckeln för
+  transport bytte från `focusedLeader` till den faktiska mål-entiteten.
+
+### Ev. förbättring — INTE implementerad: `_massDrivingEntity()`s tillförlitlighet
+
+**Status:** öppen fråga, ingen kod ändrad. Observerat live (2026-08-23)
+som sporadiska loggrader, inte ett trasigt användarflöde — uppspelning
+återhämtade sig själv ("sedan startade radion igen"). Låg allvarlighet,
+värt att lösa noga snarare än snabbt.
+
+**Det observerade felet:**
+```
+Error during service call to music_assistant.get_queue: No active queue found
+```
+Två gånger i rad, i ett rum där ägaren pausade och sedan spelade radio
+igen (HEOS, inte Spotify).
+
+**Rotorsak:** `_massDrivingEntity()` litar just nu enbart på
+`mass_entity`s EGEN `state`-attribut (`playing`/`paused` → "MA styr").
+Om det rummet tidigare spelat Spotify och sedan bytts till radio via
+HEOS, kan MA-entiteten bli kvarhängande i `paused`/`playing` utan att
+någonsin nollställas — inget tvingar MA att uppdatera sin egen status
+bara för att en ANNAN källa tog över den fysiska högtalaren via HEOS.
+Kortet trodde då felaktigt att MA styrde radio-rummet, vilket fick
+`_refreshNextTrack()` att fråga `music_assistant.get_queue` — som helt
+korrekt svarade att ingen aktiv kö fanns (MA spelar ju faktiskt
+ingenting). Troligen skulle samma kvarhängande status även ha felriktat
+transportkommandon (`_driveEntity()` bygger på samma metod) om ägaren
+tryckt Play/Pause i det ögonblicket — inte bekräftat, bara en logisk
+konsekvens av samma rotorsak.
+
+**Två idéer diskuterade, ingen vald än:**
+
+1. **Ägarens förslag: explicit lokal flagga per rum** (`_maActiveByRoom`,
+   en `Map` nycklad på rummets HEOS-entitet). Sätts deterministiskt i
+   `_onFavoriteTap()` exakt när en favorit trycks — Spotify-favorit →
+   `true`, Radio-favorit → `false` — istället för att gissas från
+   entitets-status. Löser den observerade buggen exakt (vi VET vad vi
+   just bad rummet göra). **Svaghet ägaren själv identifierade:** blind
+   för styrning från NÅGON ANNAN källa än kortet självt — Spotify-appen
+   direkt, HEOS-appen, en annan tablet med samma kort. Bryter mot samma
+   princip README redan är tydlig med för gruppering ("kortet håller sig
+   i synk med ändringar gjorda från HEOS-appen eller var som helst") —
+   en ren lokal flagga skulle INTE hålla sig i synk på samma sätt.
+2. **Alternativ: gate på HEOS egen `media_title === "Url Stream"`**
+   (bekräftad, DOKUMENTERAD konsekvens av att MA relärar ljud genom
+   HEOS — inte en godtycklig sträng, se MA:s egen dokumentation citerad
+   tidigare i den här filen: "metadata shows as URL stream due to HEOS
+   API constraints"), kombinerat med att MA-entiteten fortfarande
+   rapporterar `playing`/`paused`. Självkorrigerande oavsett VARIFRÅN
+   någon styr, eftersom den läser HEOS egen live-relästatus varje
+   rendering istället för att lita på något kortet själv kom ihåg.
+   **Svaghet:** beror på att strängen "Url Stream" förblir exakt vad
+   HEOS rapporterar — går sönder tyst (faller tillbaka till att aldrig
+   tro att MA styr) om HEOS/MA någon gång ändrar eller lokaliserar den
+   texten, utan att vi skulle märka det förrän någon rapporterar
+   symptomet igen.
+
+Ingen av idéerna är strikt bättre — ägarens flagga är robust mot att
+HEOS-texten ändras men blind för extern styrning; titel-gaten är
+självkorrigerande mot extern styrning men beroende av en observerad
+(inte formellt garanterad) sträng. En tredje, oprövad idé: kombinera
+båda — låt den lokala flaggan vara den STARKA signalen precis efter ett
+tryck i kortet, men låt den "förfalla"/omvärderas om HEOS egen titel
+sedan visar tydligt motsägande innehåll (en riktig kanalnamn istället
+för "Url Stream", eller vice versa) — inte utformad i detalj.
+
+## Kritisk helhetsgranskning, `beta-0.7.6` (2026-08-23)
+
+Ägaren bad om en genomgång av HELA filen "med nya ögon" — inte som svar
+på en specifik bugg, utan för att kortet hunnit byta riktning så många
+gånger (HEOS-only → hybrid HEOS+MA → transport-omdirigering) att risken
+för ackumulerad inkonsekvens kändes verklig. Hela filen (1765 rader) lästes
+om från grunden. **Slutsats: arkitekturen i sig behöver INTE göras om** —
+lagerindelningen (HEOS äger fysisk gruppering/volym eftersom MA saknar
+motsvarighet; MA äger Spotify-innehåll; `_driveEntity()` som enda
+skiljedomare) är sammanhållen och varje vändning drevs av ett bekräftat
+fynd, inte av gissningar. Konkreta fynd och fixar:
+
+1. **Verklig inkonsekvens-bugg, kvar efter `_driveEntity`-refaktoreringen.**
+   `_render()`s egen `isPlaying`/`nextKey`-beräkning läste fortfarande
+   `hass.states[focusedLeader]` direkt (rå HEOS-entitet) istället för via
+   `_driveEntity()`, medan `_renderHero()` redan räknade ut sin EGEN
+   `isPlaying` via `_driveEntity()` separat — exakt det mönster hela
+   refaktoreringen skulle eliminera, missat på ett ställe. Fixat: samma
+   `_driveEntity()`-uppslag som resten av rendern.
+2. **Självmotsägande kommentarer.** `_massDrivingEntity()`s dokumentation
+   påstod fortfarande "transport commands never consult this — they
+   always target the HEOS entity" — sant före `beta-0.7.5`, falskt sedan.
+   Metoden direkt efter (`_driveEntity`) beskrev korrekt det NYA
+   beteendet. Bara kommentartext ändrad, ingen funktionsändring.
+3. **`isSolo` — "grupp om 1" är nu ett explicit fält**, inte något varje
+   anropare måste räkna ut själv (`memberEntities.length < 2`) — den
+   omräkningen missades redan en gång (unjoin-på-ogrupperat-rum-buggen,
+   `beta-0.7.3`). `_onRoomTap()` uppdaterad att läsa `owning.isSolo`
+   istället för att omderivera.
+4. **Issue [#7](https://github.com/johro897/music-multiroom-card/issues/7)
+   utredd och STÄNGD — reproducerar inte.** Ägarens egen misstanke
+   ("jag tror också att det inte är ett problem längre") bekräftad: ett
+   nytt regressionstest visar att en soloframträdande/pausad rum redan
+   visas korrekt som sin egen chip i Active Groups-raden med befintlig
+   kod. Troligen läkt som en bieffekt av gruppering-relaterat arbete
+   sedan issuen skapades, aldrig omtestad förrän nu.
+5. **Editorns dubblerade bläddrings-state slogs ihop.** `_spotifyBrowse`/
+   `_radioBrowse` + `_selectedSpotifyIds`/`_selectedRadioIds` (fyra fält,
+   ~10 `isSpotify ? A : B`-förgreningar utspridda över filen) blev en enda
+   `this._browse = { spotify: {...}, radio: {...} }`, nycklad på samma
+   `category`-parameter alla dessa metoder redan tog emot. Ingen
+   beteendeändring, bara mindre upprepning och en risk mindre för att en
+   framtida tredje bläddringskategori glömmer det ena av två parallella
+   ställen.
+
+**Ny, incheckad testsvit — `test/music-multiroom-card.test.html`.** Hela
+sessionens verifiering hittills har varit engångs-scriptade tester i en
+scratch-mapp, aldrig sparade. Den här beta-omgången (`0.7.0`→`0.7.5`)
+hade flera regressioner där EN fix orsakade nästa bugg (paus-fixen
+missade idle-play-fallet, transport-omdirigeringen exponerade
+metadata-cache-buggen) — precis den sortens sak en stående svit fångar
+mekaniskt. 26 testfall, noll beroenden (matchar projektets no-build-chain-
+filosofi), körs genom att öppna filen i en webbläsare (eller servera
+repo-roten och öppna `/test/...`) — se `test/README.md`. Täcker allt som
+verifierats live eller skriptat hittills i det här projektet: favorit-
+routing, `_driveEntity`/vem-styr-logik, transport + dubbeltrycksskydd,
+Play/Pause-fallback, `isSolo`/Active-Groups-chipset (inklusive #7-testet
+ovan), gruppvolym-oavsett-källa, Up Next mot båda backends, HTML-escaping,
+och editorns bläddringsflöde. **Beslutat med ägaren:** ingen CI, inga npm-
+beroenden — körs manuellt inför en release, precis som de manuella
+`beta-X.Y.Z`-verifieringarna redan görs.
 
 ## Screenshot
 
@@ -234,8 +597,38 @@ representativt nog för en riktig release.
   `group_members` som orderoberoende mängd). Lägg till nya bevakade
   attribut här OM `_render()` börjar läsa fler `hass.states[...]`-fält,
   annars missas uppdateringar tyst — samma gotcha-mönster som
-  `tplink-switch-card`s `_statesChanged()`.
+  `tplink-switch-card`s `_statesChanged()`. Sedan `0.7.0` bevakar
+  `_watchedEntities()` även varje rums `mass_entity` (inte bara
+  `entity`), av samma anledning — se `_metaAttributes()`.
 - Säkerhetsgranskning (2026-08-23): alla ställen där användar-/HEOS-text
   hamnar i `innerHTML` går genom `escHtml()` — kontrollerat rad för rad,
   inga luckor hittade. Ingen `eval`, inga externa nätverksanrop, ingen
   localStorage/cookies. Håll detta mönster vid framtida ändringar.
+- **Uppföljande säkerhets- och prestandagranskning inför `0.7.0`
+  (2026-08-23),** hela filen läst rad för rad efter alla MA-ändringar:
+  - Samma escHtml-mönster håller för allt nytt — `mass_entity`-fältets
+    värde, `_metaAttributes()`s titel/artist/bild (oavsett om de kommer
+    från HEOS- eller MA-entiteten, samma tillitsnivå som tidigare —
+    backend-data från `hass.states`, aldrig rå extern input), MA:s
+    bläddringstitlar. Inga nya `innerHTML`-vägar saknar escaping.
+  - `_fetchBrowseNode()`/`play_media`-anropen skickar `item.media_
+    content_type`/`media_content_id` direkt som fält i ett JS-objekt till
+    HA:s websocket-API — aldrig strängkonkatinerat till HTML eller ett
+    kommando, så ingen injektionsrisk även om en illvillig MA/HEOS-källa
+    skulle returnera konstiga tecken i ett fält.
+  - Prestanda: `_watchedEntities()`s utökning till `mass_entity` är en
+    ren listbreddning, ingen ny algoritmisk komplexitet —
+    `_isDirty()`/`_computeGroups()`/`_metaAttributes()` är alla O(antal
+    rum), försumbart för realistiska rumsantal. `_metaAttributes()`
+    anropas per render OCH en gång per sekund från `_tickProgress()`, men
+    gör bara enkla objektuppslag, ingen ny loop eller nätverksanrop —
+    ingen risk för samma "full re-render varje sekund"-problem som
+    `0.5.4` löste ursprungligen.
+  - En upptäckt men medvetet ej fixad kant: om `_startBrowse()`s
+    auto-borrning in i "Playlists" (se ovan) failar EFTER att rot-nivån
+    redan hämtats, sätts både `browse.error` och ett icke-tomt
+    `browse.stack` — rendern visar felmeddelandet (kollas före
+    `stack.length` i `_renderFavSource()`), så användaren ser fel trots
+    att rot-bläddringen faktiskt lyckades. Kosmetiskt, inte en
+    funktionell bugg (ett nytt bläddringsförsök löser det), bedömt inte
+    värt att komplicera felhanteringen för.
