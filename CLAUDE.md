@@ -591,6 +591,19 @@ representativt nog för en riktig release.
   expand-knappar, favoritchips) — fångades upprepade gånger som en bugg
   under mockup-granskningen innan koden skrevs, se till att nya
   interaktiva element följer samma regel.
+- **Kortet var enbart designat för landskapsläge/panel-vy fram till
+  `0.7.6`** (issue [#10](https://github.com/johro897/music-multiroom-card/issues/10);
+  versionsnumret hoppar från `0.7.0` till `0.7.6` — inte sex patchar,
+  bara namnkrock med `0.7.0`s egna sex beta-taggar, se README)
+  — bekräftat live med en riktig skärmdump vid 375px att hero:t (fast
+  bredd på albumkonst + transportknappar + "Playing on"-badge, allt i EN
+  flex-rad) blev oanvändbart på en telefonbred skärm, trots att
+  rums-/favorit-griderna redan klarade sig själva via `auto-fill`/
+  `minmax`. Fixat med en `@media (max-width: 560px)`-brytpunkt som
+  staplar hero:t i flera rader istället. Håll koll på det här om fler
+  fasta-breddelement läggs till i hero:t framöver — de ärver INTE
+  automatiskt den responsiva brytpunkten, den är specifikt riktad mot
+  `.hero`s befintliga barn.
 - `_isDirty()` jämför INTE hela state-objekt-identitet längre (sedan
   `0.5.4`) — bara de attribut kortet faktiskt renderar (`state`,
   `media_title`/`media_artist`/`entity_picture`/`volume_level`,

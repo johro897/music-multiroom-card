@@ -1251,6 +1251,29 @@
         .eq-bar:nth-child(1) { animation-delay:0s; }
         .eq-bar:nth-child(2) { animation-delay:0.2s; }
         .eq-bar:nth-child(3) { animation-delay:0.4s; }
+
+        /* The card was only ever designed for a landscape tablet/panel
+           view (the one use case the README has ever documented) — the
+           hero row in particular has no give: fixed-width album art +
+           44-52px touch-target transport buttons + a "Playing on" badge
+           all in one flex row leave ~0px for title/artist on a phone-
+           width screen, confirmed live (2026-08-25) with a real
+           screenshot at 375px. Everything else (rooms grid, favorites
+           grid) already reflows fine on its own via auto-fill/minmax —
+           only the hero needed a breakpoint. 560px safely covers real
+           phones (portrait and slightly larger) without ever triggering
+           on an actual tablet (smallest common tablet viewports start
+           well above 600px in portrait). */
+        @media (max-width: 560px) {
+          .hero { flex-wrap:wrap; row-gap:12px; }
+          .hero-art { order:1; }
+          .hero-info { order:2; flex:1 1 auto; }
+          .hero-title { max-width:none; }
+          .hero-badge { order:3; flex:0 0 100%; }
+          .hero-spacer { display:none; }
+          .hero-transport { order:4; flex:0 0 100%; justify-content:center; }
+          .hero-progress-track { order:5; position:static; flex:0 0 100%; margin-top:2px; }
+        }
       `;
     }
   }

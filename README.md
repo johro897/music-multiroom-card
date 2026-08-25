@@ -271,6 +271,24 @@ is fixed; every existing case exists because something broke live first.
 
 ## Changelog
 
+### 0.7.6
+
+(Versions `0.7.1` through `0.7.5` are skipped — those tag names were
+already used by `0.7.0`'s own six beta rounds, `beta-0.7.0` through
+`beta-0.7.5`, and beta tags are never deleted, so reusing any of them
+here would collide. `0.7.6` is simply the first free number, not six
+patches' worth of changes.)
+
+- Fix: the Now Playing hero was essentially unusable on a phone-width
+  screen — fixed-width album art, transport buttons, and the "Playing
+  on" badge all competed for space in one row, leaving almost no room
+  for title/artist. Confirmed live with a real screenshot at 375px.
+  Everything else (rooms grid, favorites grid) already reflowed
+  correctly on its own; only the hero needed a breakpoint. It now wraps
+  into stacked rows below 560px wide — never triggers on an actual
+  tablet, the one layout this card has ever been designed for.
+  ([#10](https://github.com/johro897/music-multiroom-card/issues/10))
+
 ### 0.7.0 — Real Spotify playback via Music Assistant
 
 **Hybrid backend.** Each room gets a new optional `mass_entity` field —
