@@ -97,11 +97,15 @@ problems getting Music Assistant itself working.
 
 ## Installation
 
-### Via HACS (recommended, once added to the default store)
+### Via HACS (custom repository)
 
-Search for "Music Multiroom Card" in HACS → Frontend, install, then add the
-card via the Lovelace UI ("+ Add Card" → "Music Multiroom Card") or as
-`type: custom:music-multiroom-card` in YAML.
+Not yet in the HACS default catalog ([tracking issue](https://github.com/johro897/music-multiroom-card/issues/4)) — add it as a custom repository first:
+
+1. HACS → ⋮ → Custom repositories → add `https://github.com/johro897/music-multiroom-card`, category **Dashboard**
+2. Search for **Music Multiroom Card** and install
+3. Add the card via the Lovelace UI ("+ Add Card" → "Music Multiroom Card") or as `type: custom:music-multiroom-card` in YAML
+
+Once accepted into the HACS default catalog, it'll be directly searchable without adding a custom repository first.
 
 ### Manual install
 
