@@ -32,8 +32,11 @@ that's determined, transport command routing and the double-tap guard,
 the Play/Pause button's fallback behavior when a source doesn't support
 `PAUSE`, solo-room grouping (`isSolo`) and the Active Groups strip, group
 volume staying on HEOS regardless of what's playing, "Up Next" against
-both backends, HTML-escaping, and the config editor's room/favorites
-rendering and browse flow.
+both backends, HTML-escaping, the config editor's room/favorites
+rendering and browse flow, the compact layout (#15: what it renders and
+doesn't, idle-room chips, More navigation, the editor's layout/more_path
+fields), and the volume slider's drag guard (a hass update mid-drag must
+not replace the slider).
 
 ## Adding a case
 

@@ -47,6 +47,8 @@
       mute: 'Mute',
       unmute: 'Unmute',
       up_next: 'Up next: {track}',
+      more: 'New group / More',
+      pick_group_hint: 'Pick a room or group above',
       rooms_required: '"rooms" must be a non-empty list of media_player entities',
       rooms_duplicate: '"rooms" has the same media_player entity configured twice ({entity})',
       error_join: "Couldn't add the room to the group",
@@ -80,6 +82,11 @@
       editor_already_added: 'Already added',
       editor_no_rooms_configured: 'Add at least one room before browsing.',
       editor_no_mass_rooms: 'No rooms have a Music Assistant entity configured yet — add one above to browse Spotify.',
+      editor_layout: 'Layout',
+      editor_layout_full: 'Full (default)',
+      editor_layout_compact: 'Compact',
+      editor_more_path: '"More" button path',
+      editor_more_path_hint: 'Path to a view with the full card, e.g. /dashboard-kitchen/music. Leave empty to hide the button.',
     },
     sv: {
       now_playing: 'Nu spelas',
@@ -109,6 +116,8 @@
       mute: 'Tysta',
       unmute: 'Sätt på ljud',
       up_next: 'Näst på tur: {track}',
+      more: 'Ny grupp / Mer',
+      pick_group_hint: 'Välj ett rum eller en grupp ovan',
       rooms_required: '"rooms" måste vara en icke-tom lista med media_player-entiteter',
       rooms_duplicate: '"rooms" har samma media_player-entitet konfigurerad två gånger ({entity})',
       error_join: 'Kunde inte lägga till rummet i gruppen',
@@ -142,6 +151,11 @@
       editor_already_added: 'Redan tillagd',
       editor_no_rooms_configured: 'Lägg till minst ett rum innan du bläddrar.',
       editor_no_mass_rooms: 'Inga rum har en Music Assistant-entitet konfigurerad än — lägg till en ovan för att bläddra Spotify.',
+      editor_layout: 'Layout',
+      editor_layout_full: 'Full (standard)',
+      editor_layout_compact: 'Kompakt',
+      editor_more_path: 'Sökväg för "Mer"-knappen',
+      editor_more_path_hint: 'Sökväg till en vy med det fulla kortet, t.ex. /dashboard-kok/musik. Lämna tomt för att dölja knappen.',
     },
   };
 
@@ -187,6 +201,10 @@
   const FEATURE_PAUSE = 1;
   const FEATURE_VOLUME_MUTE = 8;
   const FEATURE_STOP = 4096;
+
+  // How long renders stay deferred after a volume slider is released —
+  // see _scheduleSliderRelease().
+  const SLIDER_RELEASE_GRACE_MS = 1200;
 
   function colorForLeader(entityId, rooms) {
     const idx = rooms.findIndex((r) => r.entity === entityId);
@@ -266,6 +284,15 @@
       this._activeFavTab = 'spotify';
       this._pendingEntities = new Set();
       this._nextTrackCache = { key: null, next: null };
+      // True while a finger/mouse is on a volume slider — _render() is
+      // deferred until it's released, see _beginSliderDrag().
+      this._sliderActive = false;
+      this._renderDeferred = false;
+      this._sliderReleaseTimer = null;
+    }
+
+    _isCompact() {
+      return this._config?.layout === 'compact';
     }
 
     setConfig(config) {
@@ -294,7 +321,15 @@
           spotify: (config.favorites && config.favorites.spotify) || [],
           radio: (config.favorites && config.favorites.radio) || [],
         },
+        // 'full' (default, the original card, unchanged) or 'compact' — a
+        // different rendering of the same state for a small sections-grid
+        // slot (#15). Anything unrecognized falls back to 'full'.
+        layout: config.layout === 'compact' ? 'compact' : 'full',
+        more_path: typeof config.more_path === 'string' ? config.more_path.trim() : '',
       };
+      // :host fills the grid cell only in compact mode (see _css) — full
+      // mode keeps its original auto height.
+      this.toggleAttribute('compact', this._isCompact());
       if (this._focusedGroupId && !this._config.rooms.some((r) => r.entity === this._focusedGroupId)) {
         this._focusedGroupId = null;
       }
@@ -311,6 +346,17 @@
 
     getCardSize() {
       return 6;
+    }
+
+    // Sections-view sizing. Only compact mode declares any — full mode
+    // returns undefined, which HA's hui-card treats as {} (confirmed in
+    // home-assistant/frontend's hui-card.ts getElementGridOptions,
+    // 2026-10-10), i.e. exactly the defaults the card got before this
+    // method existed. A `grid_options` block in the card's own YAML still
+    // wins over these in both modes (hui-card merges config over element).
+    getGridOptions() {
+      if (!this._isCompact()) return undefined;
+      return { rows: 8, min_rows: 5, columns: 12 };
     }
 
     set hass(hass) {
@@ -374,6 +420,14 @@
       this.attachShadow({ mode: 'open' });
       this.shadowRoot.addEventListener('click', (e) => this._onClick(e));
       this.shadowRoot.addEventListener('change', (e) => this._onChange(e));
+      this.shadowRoot.addEventListener('pointerdown', (e) => {
+        if (e.target.matches?.('input[type="range"]')) this._beginSliderDrag();
+      });
+      const release = (e) => {
+        if (e.target.matches?.('input[type="range"]')) this._scheduleSliderRelease();
+      };
+      this.shadowRoot.addEventListener('pointerup', release);
+      this.shadowRoot.addEventListener('pointercancel', release);
       // Ticks the progress bar's width directly via DOM mutation, not a
       // full _render() — media_position updates on a real playing track
       // every few seconds, and _isDirty() deliberately does NOT watch it
@@ -384,6 +438,39 @@
 
     disconnectedCallback() {
       clearInterval(this._progressInterval);
+      clearTimeout(this._sliderReleaseTimer);
+    }
+
+    // Every _render() replaces the whole shadow DOM, so a hass update
+    // arriving mid-drag (constantly, on a live instance) would swap the
+    // slider out from under the finger and end the drag. While a slider
+    // is held, renders are deferred and run once on release instead.
+    _beginSliderDrag() {
+      clearTimeout(this._sliderReleaseTimer);
+      this._sliderActive = true;
+      // Safety net: never stay frozen if a pointerup is lost somewhere.
+      this._sliderReleaseTimer = setTimeout(() => this._endSliderDrag(), 15000);
+    }
+
+    // pointerup fires BEFORE the input's own `change` event — re-rendering
+    // right away would detach the slider before `change` (the one that
+    // actually sets the volume) gets to fire. And right after `change`,
+    // hass still holds the OLD volume until HEOS reports back, so an
+    // immediate render would snap the thumb back for a moment. Both are
+    // covered by holding renders for a short grace period after release.
+    _scheduleSliderRelease() {
+      clearTimeout(this._sliderReleaseTimer);
+      this._sliderReleaseTimer = setTimeout(() => this._endSliderDrag(), SLIDER_RELEASE_GRACE_MS);
+    }
+
+    _endSliderDrag() {
+      clearTimeout(this._sliderReleaseTimer);
+      if (!this._sliderActive) return;
+      this._sliderActive = false;
+      if (this._renderDeferred) {
+        this._renderDeferred = false;
+        this._render();
+      }
     }
 
     _tickProgress() {
@@ -555,6 +642,9 @@
         case 'toggle-mute':
           this._toggleMute(el.dataset.entity, el.dataset.muted === 'true');
           break;
+        case 'navigate-more':
+          this._navigate(this._config.more_path);
+          break;
         default:
           break;
       }
@@ -568,6 +658,7 @@
       } else {
         this._setGroupVolume(Number(el.value));
       }
+      if (this._sliderActive) this._scheduleSliderRelease();
     }
 
     // Surfaces a failed service call via HA's own toast/notification system
@@ -585,6 +676,22 @@
           composed: true,
         })
       );
+    }
+
+    // Same mechanism HA's own frontend navigate() uses (pushState +
+    // "location-changed" on the window, see src/common/navigate.ts) — the
+    // standard way for a custom card to switch dashboard view without a
+    // full page reload. Only same-origin paths: a bare "dashboard-kok/x"
+    // gets its leading slash added, anything with a scheme is ignored.
+    _navigate(path) {
+      if (!path || /^[a-z][a-z0-9+.-]*:/i.test(path)) return;
+      const target = path.startsWith('/') ? path : `/${path}`;
+      try {
+        window.history.pushState(null, '', target);
+        window.dispatchEvent(new CustomEvent('location-changed', { detail: { replace: false } }));
+      } catch (err) {
+        console.error('music-multiroom-card: navigation failed', err);
+      }
     }
 
     _guardPending(entity) {
@@ -823,6 +930,10 @@
     // ---- render -------------------------------------------------------
     _render() {
       if (!this._hass || !this._config) return;
+      if (this._sliderActive) {
+        this._renderDeferred = true;
+        return;
+      }
       const hass = this._hass;
       const groups = this._computeGroups();
 
@@ -876,6 +987,25 @@
             }
           : null);
 
+      // Compact layout (#15): same groups/focus state as above, different
+      // rendering. No "Up next" line there, so no queue lookups either.
+      if (this._isCompact()) {
+        this.shadowRoot.innerHTML = `
+          <style>${this._css()}</style>
+          <div class="card compact">
+            ${this._renderGroupsStrip(groups, focusedLeader, { compact: true })}
+            ${this._renderNowPlayingCompact(focusedGroup, focusedLeader)}
+            ${focusedLeader ? this._renderVolumeSection(focusedLeader, { compact: true }) : ''}
+            ${this._renderFavoritesCompact(focusedLeader)}
+            ${
+              this._config.more_path
+                ? `<button class="more-btn" data-action="navigate-more">${iconPlus()}<span>${escHtml(t(hass, 'more'))}</span></button>`
+                : ''
+            }
+          </div>`;
+        return;
+      }
+
       // Reads the driving entity's own state, not always the HEOS
       // entity's — found on a fresh audit (2026-08-23) that this had been
       // left reading focusedLeader directly while _renderHero computed
@@ -910,7 +1040,13 @@
         </div>`;
     }
 
-    _renderGroupsStrip(groups, focusedLeader) {
+    // `compact` (#15): no "New Group" chip (group editing lives behind the
+    // More button), but every configured room that isn't currently in a
+    // group gets a plain chip too — otherwise with nothing playing there'd
+    // be nothing to pick, and favorites need a focused room. Tapping one
+    // only focuses it (same as tapping an idle room tile with no group
+    // focused in full mode), it never joins anything.
+    _renderGroupsStrip(groups, focusedLeader, { compact = false } = {}) {
       const hass = this._hass;
       const chips = groups
         .map((g) => {
@@ -930,6 +1066,23 @@
             </div>`;
         })
         .join('');
+      if (compact) {
+        const grouped = new Set(groups.flatMap((g) => g.memberEntities));
+        const idleChips = this._config.rooms
+          .filter((r) => !grouped.has(r.entity) && hass.states[r.entity])
+          .map((r) => {
+            const focused = r.entity === focusedLeader;
+            const color = colorForLeader(r.entity, this._config.rooms);
+            const style = focused ? `background:${hexA(color, 0.14)};border-color:${color};` : '';
+            return `
+            <div class="chip chip-idle ${focused ? 'chip-focused' : ''}" style="${style}" data-action="focus-group" data-group-id="${escHtml(r.entity)}">
+              <span class="chip-dot" style="background:${focused ? color : 'var(--mmc-disabled)'};"></span>
+              <span class="chip-label">${escHtml(r.name)}</span>
+            </div>`;
+          })
+          .join('');
+        return `<div class="groups-strip">${chips}${idleChips}</div>`;
+      }
       const newGroupActive = !focusedLeader;
       return `
         <div class="groups-strip">
@@ -966,26 +1119,7 @@
       const title = meta?.media_title || t(hass, 'no_media');
       const artist = meta?.media_artist || '';
       const picture = meta?.entity_picture;
-      const features = meta?.supported_features || 0;
-      const canStop = !!(features & FEATURE_STOP);
-      // Some sources — confirmed live (2026-08-23): HEOS radio streams —
-      // don't support pause at all, only stop (pausing a live stream
-      // isn't meaningful the way pausing a track is). media_play_pause
-      // fails outright ("does not support action") on such an entity
-      // REGARDLESS of direction — not just when it would resolve to
-      // "pause", also when idle and it would resolve to plain "play"
-      // (found live 2026-08-23: after Stop, the Play button itself
-      // stopped working, because it was still calling the combined
-      // play_pause service). So when PAUSE isn't supported, avoid
-      // play_pause entirely — call the direct, unambiguous service for
-      // whichever direction is actually needed instead.
-      const canPause = !!(features & FEATURE_PAUSE);
-      const mainCmd = canPause ? 'play_pause' : isPlaying ? 'stop' : 'play';
-      const mainIcon = isPlaying ? (canPause ? iconPause() : iconStop()) : iconPlay();
-      const mainLabelKey = isPlaying ? (canPause ? 'pause' : 'stop') : 'play';
-      // The separate Stop button is only worth showing alongside a main
-      // button that isn't already covering Stop itself.
-      const showExtraStop = canStop && canPause;
+      const { mainCmd, mainIcon, mainLabelKey, showExtraStop } = this._transportModel(st);
       const names = focusedGroup.memberEntities.map(
         (id) => this._config.rooms.find((r) => r.entity === id)?.name || id
       );
@@ -1042,6 +1176,95 @@
               : ''
           }
         </div>`;
+    }
+
+    // Main play/pause button behavior for the driving entity's state —
+    // shared by the full hero and the compact now-playing row so both
+    // follow the exact same pause/stop rules.
+    _transportModel(st) {
+      const isPlaying = st?.state === 'playing';
+      const features = st?.attributes?.supported_features || 0;
+      const canStop = !!(features & FEATURE_STOP);
+      // Some sources — confirmed live (2026-08-23): HEOS radio streams —
+      // don't support pause at all, only stop (pausing a live stream
+      // isn't meaningful the way pausing a track is). media_play_pause
+      // fails outright ("does not support action") on such an entity
+      // REGARDLESS of direction — not just when it would resolve to
+      // "pause", also when idle and it would resolve to plain "play"
+      // (found live 2026-08-23: after Stop, the Play button itself
+      // stopped working, because it was still calling the combined
+      // play_pause service). So when PAUSE isn't supported, avoid
+      // play_pause entirely — call the direct, unambiguous service for
+      // whichever direction is actually needed instead.
+      const canPause = !!(features & FEATURE_PAUSE);
+      const mainCmd = canPause ? 'play_pause' : isPlaying ? 'stop' : 'play';
+      const mainIcon = isPlaying ? (canPause ? iconPause() : iconStop()) : iconPlay();
+      const mainLabelKey = isPlaying ? (canPause ? 'pause' : 'stop') : 'play';
+      // The separate Stop button is only worth showing alongside a main
+      // button that isn't already covering Stop itself.
+      const showExtraStop = canStop && canPause;
+      return { mainCmd, mainIcon, mainLabelKey, showExtraStop };
+    }
+
+    // Compact layout's one-line "now playing" (#15): cover, title — artist,
+    // play/pause + next. Reads the same driving entity as the full hero.
+    _renderNowPlayingCompact(focusedGroup, focusedLeader) {
+      const hass = this._hass;
+      if (!focusedGroup) {
+        return `
+          <div class="np" style="border-left-color:var(--mmc-disabled);">
+            <div class="np-art">${iconNote()}</div>
+            <div class="np-line"><span class="np-title">${escHtml(t(hass, 'no_group_focused'))}</span><span class="np-artist"> — ${escHtml(t(hass, 'pick_group_hint'))}</span></div>
+          </div>`;
+      }
+      const st = hass.states[this._driveEntity(focusedLeader)];
+      const meta = st?.attributes;
+      const title = meta?.media_title || t(hass, 'no_media');
+      const artist = meta?.media_artist || '';
+      const picture = meta?.entity_picture;
+      const { mainCmd, mainIcon, mainLabelKey } = this._transportModel(st);
+      return `
+        <div class="np" style="border-left-color:${focusedGroup.color};">
+          <div class="np-art">${picture ? `<img src="${escHtml(picture)}" alt="">` : iconNote()}</div>
+          <div class="np-line"><span class="np-title">${escHtml(title)}</span>${artist ? `<span class="np-artist"> — ${escHtml(artist)}</span>` : ''}</div>
+          <div class="np-transport">
+            <button class="tbtn tbtn-main" data-action="transport" data-cmd="${mainCmd}" title="${escHtml(t(hass, mainLabelKey))}" aria-label="${escHtml(t(hass, mainLabelKey))}">${mainIcon}</button>
+            <button class="tbtn" data-action="transport" data-cmd="next" title="${escHtml(t(hass, 'next'))}" aria-label="${escHtml(t(hass, 'next'))}">${iconNext()}</button>
+          </div>
+        </div>`;
+    }
+
+    // Compact favorites (#15): both sources at once, no tabs — one labelled
+    // block each, chips wrap (see .cfav-row). Same data-* attributes and
+    // _onFavoriteTap routing as the full shelf; only the markup differs.
+    _renderFavoritesCompact(focusedLeader) {
+      const hass = this._hass;
+      const cfg = this._config.favorites;
+      const focusedRoom = focusedLeader ? this._config.rooms.find((r) => r.entity === focusedLeader) : null;
+      const row = (source, list) => {
+        if (!list || !list.length) return '';
+        const noMassEntity = source === 'spotify' && !!focusedLeader && !focusedRoom?.mass_entity;
+        const disabled = !focusedLeader || noMassEntity;
+        const chips = list
+          .map((fav) => {
+            const icon = fav.icon || (source === 'radio' ? 'mdi:radio' : 'mdi:spotify');
+            return `
+              <div class="cfav-chip ${disabled ? 'fav-disabled' : ''}" data-action="play-favorite" data-source="${source}" data-type="${escHtml(
+              fav.media_content_type
+            )}" data-id="${escHtml(fav.media_content_id)}" title="${escHtml(fav.name)}">
+                <ha-icon icon="${escHtml(icon)}"></ha-icon>
+                <span class="cfav-name">${escHtml(fav.name)}</span>
+              </div>`;
+          })
+          .join('');
+        return `
+          <div class="cfav-label">${escHtml(t(hass, source))}${
+          noMassEntity ? ` <span class="cfav-hint">· ${escHtml(t(hass, 'favorites_no_mass_hint'))}</span>` : ''
+        }</div>
+          <div class="cfav-row">${chips}</div>`;
+      };
+      const body = row('spotify', cfg.spotify) + row('radio', cfg.radio);
+      return `<div class="cfavs">${body || `<div class="fav-empty">${escHtml(t(hass, 'no_favorites'))}</div>`}</div>`;
     }
 
     _renderRoomsGrid(groups, focusedLeader) {
@@ -1117,7 +1340,7 @@
       return `<div class="rooms-grid">${rows}</div>`;
     }
 
-    _renderVolumeSection(focusedLeader) {
+    _renderVolumeSection(focusedLeader, { compact = false } = {}) {
       const hass = this._hass;
       const st = hass.states[focusedLeader];
       const vol = st?.attributes?.volume_level;
@@ -1125,6 +1348,21 @@
       const features = st?.attributes?.supported_features || 0;
       const canMute = !!(features & FEATURE_VOLUME_MUTE);
       const muted = !!st?.attributes?.is_volume_muted;
+      if (compact) {
+        // One line: mute (or a plain volume icon) + slider + percent. Same
+        // data-action as the full bar, so the same heos.group_volume_set
+        // call — the label text is dropped to save width.
+        return `
+        <div class="volume-bar cvol">
+          ${
+            canMute
+              ? `<button class="mute-btn ${muted ? 'mute-btn-active' : ''}" data-action="toggle-mute" data-entity="${escHtml(focusedLeader)}" data-muted="${muted}" title="${escHtml(t(hass, muted ? 'unmute' : 'mute'))}" aria-label="${escHtml(t(hass, muted ? 'unmute' : 'mute'))}" aria-pressed="${muted}">${muted ? iconVolumeMute() : iconVolume()}</button>`
+              : `<span class="volume-icon">${iconVolume()}</span>`
+          }
+          <input type="range" class="slider slider-flex" min="0" max="100" value="${pct}" data-action="group-volume" aria-label="${escHtml(t(hass, 'group_volume'))}" />
+          <div class="volume-pct">${pct}%</div>
+        </div>`;
+      }
       return `
         <div class="volume-bar">
           <span class="volume-icon">${iconVolume()}</span>
@@ -1287,6 +1525,68 @@
         .fav-name { font-size:11.5px; line-height:1.25; }
         .fav-empty { grid-column:1/-1; font-size:13px; color: var(--mmc-text-secondary); padding:12px 0; }
 
+        /* ---- compact layout (#15) ------------------------------------
+           Fills whatever height the sections grid assigns (getGridOptions)
+           as a flex column; everything is fixed-height except the
+           favorites block, which takes the rest and scrolls inside the
+           card. Budget at the kitchen tablet's 8 rows (504px): ~250px for
+           strip + now playing + volume + More, ~250px for favorites. */
+        :host([compact]) { height:100%; }
+        .card.compact { height:100%; min-height:0; padding:12px; gap:8px; overflow:hidden; }
+        .compact .groups-strip { gap:8px; scrollbar-width:none; }
+        .compact .chip { padding:8px 14px; min-height:44px; }
+        .chip-idle { color: var(--mmc-text-secondary); }
+        .chip-idle.chip-focused { color: var(--primary-text-color); }
+
+        .np {
+          display:flex; align-items:center; gap:10px; background: var(--mmc-tile-bg);
+          border-radius:12px; border-left:4px solid var(--mmc-accent); padding:6px 8px 6px 10px;
+          min-height:56px; flex-shrink:0;
+        }
+        .np-art {
+          width:40px; height:40px; border-radius:8px; background: rgba(128,128,128,0.15);
+          display:flex; align-items:center; justify-content:center; flex-shrink:0; overflow:hidden;
+          color: var(--mmc-text-secondary);
+        }
+        .np-art img { width:100%; height:100%; object-fit:cover; }
+        .np-art svg { width:20px; height:20px; }
+        .np-line { flex:1 1 auto; min-width:0; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .np-title { font-weight:600; }
+        .np-artist { color: var(--mmc-text-secondary); }
+        .np-transport { display:flex; align-items:center; gap:6px; flex-shrink:0; }
+        .np .tbtn-main { width:44px; height:44px; }
+
+        .cvol { padding:4px 12px; gap:10px; min-height:48px; }
+        .cvol .slider { height:40px; min-width:0; }
+        .cvol .volume-icon { display:flex; width:40px; justify-content:center; flex-shrink:0; }
+
+        .cfavs {
+          flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain;
+          display:flex; flex-direction:column; gap:6px;
+          scrollbar-width:thin; scrollbar-color: var(--mmc-divider) transparent;
+        }
+        .cfav-label { font-size:11px; letter-spacing:.07em; text-transform:uppercase; color: var(--mmc-text-secondary); font-weight:600; flex-shrink:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .cfav-hint { text-transform:none; letter-spacing:0; font-weight:500; }
+        /* Chips wrap rather than scroll sideways: at the kitchen tablet's
+           8 rows there's room for every favorite at once, and when there
+           isn't (fewer rows, many favorites) .cfavs above scrolls instead
+           — one scroll direction, always inside the card. */
+        .cfav-row { display:flex; flex-wrap:wrap; gap:8px; flex-shrink:0; }
+        .cfav-chip {
+          display:flex; align-items:center; gap:8px; min-height:44px; padding:0 14px; max-width:200px;
+          border-radius:22px; background: var(--mmc-tile-bg); flex-shrink:0; cursor:pointer; transition: filter .15s;
+        }
+        .cfav-chip:hover { filter: brightness(1.1); }
+        .cfav-chip ha-icon { --mdc-icon-size:18px; flex-shrink:0; }
+        .cfav-name { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+        .more-btn {
+          flex-shrink:0; min-height:44px; display:flex; align-items:center; justify-content:center; gap:8px;
+          border:1.5px dashed var(--mmc-divider); border-radius:12px; background:transparent;
+          color: var(--mmc-text-secondary); font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;
+        }
+        .more-btn:hover { color: var(--primary-text-color); }
+
         @keyframes mmc-eq { 0%,100% { transform: scaleY(0.4); } 50% { transform: scaleY(1); } }
         .eq-bar { transform-origin:bottom; animation: mmc-eq 0.9s ease-in-out infinite; fill: currentColor; }
         .eq-bar:nth-child(1) { animation-delay:0s; }
@@ -1400,6 +1700,25 @@
       this.shadowRoot.innerHTML = `
         <style>${this._css()}</style>
         <div class="editor">
+          <div class="section">
+            <div class="section-title">${escHtml(t(hass, 'editor_layout'))}</div>
+            <div class="row">
+              <select class="field-select" data-field="layout" aria-label="${escHtml(t(hass, 'editor_layout'))}">
+                <option value="full" ${this._config.layout === 'compact' ? '' : 'selected'}>${escHtml(t(hass, 'editor_layout_full'))}</option>
+                <option value="compact" ${this._config.layout === 'compact' ? 'selected' : ''}>${escHtml(t(hass, 'editor_layout_compact'))}</option>
+              </select>
+            </div>
+            ${
+              this._config.layout === 'compact'
+                ? `<div class="row">
+              <input class="field-text field-card" type="text" data-field="more_path" placeholder="${escHtml(t(hass, 'editor_more_path'))}" aria-label="${escHtml(
+                    t(hass, 'editor_more_path')
+                  )}" value="${escHtml(this._config.more_path || '')}" />
+            </div>
+            <div class="hint">${escHtml(t(hass, 'editor_more_path_hint'))}</div>`
+                : ''
+            }
+          </div>
           <div class="section">
             <div class="section-title">${escHtml(t(hass, 'editor_rooms'))}</div>
             ${this._renderRoomsRows()}
@@ -1603,6 +1922,23 @@
 
     _onFieldChange(e) {
       const el = e.target;
+      // Card-level options (#15). `layout: full` is the default, so it's
+      // dropped from the config instead of written out — an existing
+      // card's YAML stays exactly as it was unless compact is chosen.
+      if (el.matches('select.field-select[data-field="layout"]')) {
+        if (el.value === 'compact') this._config.layout = 'compact';
+        else delete this._config.layout;
+        this._fireConfigChanged();
+        this._render();
+        return;
+      }
+      if (el.matches('input.field-card[data-field="more_path"]')) {
+        const v = el.value.trim();
+        if (v) this._config.more_path = v;
+        else delete this._config.more_path;
+        this._fireConfigChanged();
+        return;
+      }
       if (el.matches('input.field-text')) {
         const idx = Number(el.dataset.idx);
         const target = el.dataset.target;
@@ -1798,6 +2134,7 @@
         .row-name { flex-grow:1; font-size:14px; }
         .field-entity, .field-icon { flex:1 1 0; min-width:0; }
         .field-icon-narrow { flex:0 0 90px; }
+        .field-select { flex:1 1 0; min-width:0; height:44px; padding:0 8px; border-radius:6px; border:1px solid var(--divider-color, #444); background: var(--card-background-color, transparent); color: var(--primary-text-color); font-size:14px; }
         .field-text { flex:1 1 0; min-width:0; height:44px; padding:0 10px; border-radius:6px; border:1px solid var(--divider-color, #444); background: var(--card-background-color, transparent); color: var(--primary-text-color); font-size:14px; }
         .icon-btn { width:40px; height:40px; min-width:40px; border-radius:8px; border:none; background: rgba(128,128,128,.15); color: var(--primary-text-color); cursor:pointer; display:flex; align-items:center; justify-content:center; }
         .add-btn { height:44px; padding:0 16px; border-radius:8px; border:1px dashed var(--divider-color,#666); background:transparent; color: var(--primary-color); cursor:pointer; font-size:13px; font-weight:600; align-self:flex-start; }

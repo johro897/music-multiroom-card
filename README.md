@@ -36,6 +36,12 @@ for — Sonos, Bluesound, or any other platform.
   hand. Grouping and volume always stay on native HEOS; transport
   (Next/Prev/Play/Pause/Stop) follows whichever backend is actually
   playing — see [Architecture](#architecture-two-integrations-on-purpose).
+- **Compact layout** (`layout: compact`, since `1.1.0`) for a small
+  dashboard slot, e.g. a tablet start page: group picker, a one-line now
+  playing, group volume, and both favorite lists, sized to fill a
+  sections-view grid cell without making the page scroll. A **More**
+  button can jump to a separate view with the full card for grouping
+  rooms. The full layout stays the default and is unchanged.
 - **Built-in GUI editor**, including the browse-and-pick flow — no YAML
   required to configure the card.
 - English/Swedish UI, theme-aware colors (dark and light Home Assistant
@@ -146,10 +152,41 @@ favorites:
   radio: []     # populate via the editor's "Browse HEOS" picker
 ```
 
+### Compact layout
+
+For a small slot on a dashboard that shouldn't scroll — a wall tablet's
+start page, say — set `layout: compact`:
+
+```yaml
+type: custom:music-multiroom-card
+layout: compact
+more_path: /dashboard-kitchen/music   # optional: a view with the full card
+rooms: [...]                          # same as the full layout
+favorites: {...}                      # same as the full layout
+```
+
+Top to bottom it shows: the group strip (plus every room that isn't
+grouped right now, so there's always something to pick even when nothing
+is playing — picking only *selects* it, it never groups anything), a
+one-line now playing (cover, title — artist, play/pause, next), the group
+volume with mute, Spotify and Radio favorites, and a **New group / More**
+button that navigates to `more_path`. Leave `more_path` out and the button
+is hidden. There's no rooms grid, no "Up next" and no grouping in this
+layout — that's what the full card on the other view is for.
+
+In a **sections** view the card asks for 8 rows by default (`min_rows: 5`,
+full width) and fills whatever height it's given; if there are more
+favorites than fit, the favorites area scrolls inside the card, never the
+page. A `grid_options` block in your own YAML overrides those defaults as
+usual. Everything else — grouping rules, volume, favorite playback,
+transport — is the exact same code as the full layout.
+
 ### Options
 
 | Option | Type | Required | Description |
 |---|---|---|---|
+| `layout` | string | no | `full` (default — the card as described above) or `compact` (see [Compact layout](#compact-layout)). |
+| `more_path` | string | no | Compact layout only: dashboard path the **New group / More** button navigates to, e.g. `/dashboard-kitchen/music`. The button is hidden when this isn't set. |
 | `rooms` | list | yes | Media player entities that can be grouped. Each entry: `entity` (HEOS), optional `name` (defaults to the entity id), optional `icon` (defaults to `mdi:speaker`), optional `mass_entity` (that room's Music Assistant counterpart for the *same* physical speaker — leave unset if this room isn't managed by Music Assistant). |
 | `favorites.spotify` | list | no | Spotify favorites, played via **Music Assistant**. Populated in the editor by picking a room that has `mass_entity` set, clicking "Browse Spotify", and picking real items from your own Spotify library. Rooms without `mass_entity` can't play these — the tab shows a hint instead. |
 | `favorites.radio` | list | no | Radio favorites, played via **native HEOS**, unchanged from before. Populated by picking any configured room, clicking "Browse HEOS", and drilling into a source like "TuneIn" or "Favorites". Only things already starred as a Favorite in the HEOS app show up — there's no search. |
@@ -195,8 +232,9 @@ test suite — open it directly in a browser (or serve the repo root and
 open `/test/music-multiroom-card.test.html`) to run it. Covers favorite
 routing, which backend is "driving" a room and how that's decided,
 transport routing and its double-tap guard, the Play/Pause button's
-fallback behavior, solo-room grouping, HTML-escaping, and the editor's
-browse flow — see `test/README.md`. Add a case here whenever a real bug
+fallback behavior, solo-room grouping, HTML-escaping, the editor's
+browse flow, the compact layout, and the volume slider's drag guard —
+see `test/README.md`. Add a case here whenever a real bug
 is fixed; every existing case exists because something broke live first.
 
 ## Troubleshooting
@@ -230,6 +268,11 @@ is fixed; every existing case exists because something broke live first.
   added resource alongside a HACS-managed one) — see this project's
   paraplymapp-level `CLAUDE.md` for the full pattern; it isn't specific to
   this card.
+- **Compact layout doesn't fill its slot / grows with its content.** It
+  only sizes itself to a grid cell in a **sections** view. In a masonry
+  or panel view there's no cell height to fill, so it simply takes the
+  height its content needs. A `grid_options: rows:` in your card YAML
+  overrides the 8-row default if the slot is a different size.
 - **Spotify tab shows a hint instead of favorites / tapping a Spotify
   favorite does nothing but shows an error toast.** The focused room has
   no `mass_entity` configured — add one in the editor (that room's own
@@ -281,7 +324,21 @@ is fixed; every existing case exists because something broke live first.
 
 ## Changelog
 
-### 1.0.0
+### 1.1.0
+
+- **New: compact layout** (`layout: compact`) for a small dashboard slot
+  such as a tablet start page — group strip, one-line now playing, group
+  volume and both favorite lists, plus an optional **New group / More**
+  button (`more_path`) that navigates to a view with the full card.
+  Implements `getGridOptions()` (8 rows by default, `min_rows: 5`) and
+  fills the assigned grid cell; overflowing favorites scroll inside the
+  card. Both options are in the visual editor. The full layout is the
+  default and renders exactly as before.
+  ([#15](https://github.com/johro897/music-multiroom-card/issues/15))
+- Fix (both layouts): dragging a volume slider could be cut short when a
+  Home Assistant state update arrived mid-drag, since every update
+  rebuilds the card. Updates are now held while a slider is touched and
+  applied right after it's released.
 
 - Fix: the Now Playing hero always defaulted to "New Group" on load —
   including right after a page reload while a group was already actively

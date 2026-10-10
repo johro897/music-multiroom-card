@@ -638,6 +638,250 @@
   });
 
   // ---------------------------------------------------------------------
+  // Compact layout (#15)
+  // ---------------------------------------------------------------------
+  const KITCHEN_ROOMS = [
+    { entity: 'media_player.koket', name: 'Köket', mass_entity: 'media_player.koket' },
+    { entity: 'media_player.matplatsen', name: 'Matplatsen', mass_entity: 'media_player.matplatsen' },
+  ];
+  const KITCHEN_FAVS = {
+    spotify: [{ name: 'God morgon', media_content_type: 'playlist', media_content_id: 'library://playlist/1' }],
+    radio: [{ name: 'P3', media_content_type: '', media_content_id: 'heos://media/1028/station?id=1' }],
+  };
+  function kitchenStates(koketState = 'playing', extra = {}) {
+    return {
+      'media_player.koket': {
+        state: koketState,
+        attributes: { group_members: ['media_player.koket'], volume_level: 0.3, supported_features: 1 | 8 | 4096, media_title: 'Song', media_artist: 'Artist', ...extra },
+      },
+      'media_player.matplatsen': { state: 'idle', attributes: { group_members: ['media_player.matplatsen'], volume_level: 0.2 } },
+    };
+  }
+
+  test('Full layout (no `layout` key) renders exactly the original sections and declares no grid options', async () => {
+    const card = freshCard();
+    card.setConfig({ type: 'custom:music-multiroom-card', rooms: KITCHEN_ROOMS, favorites: KITCHEN_FAVS });
+    card.hass = fakeHass({ states: kitchenStates() }).hass;
+    const root = card.shadowRoot;
+    assertTrue(!!root.querySelector('.hero'), 'hero present');
+    assertTrue(!!root.querySelector('.rooms-grid'), 'rooms grid present');
+    assertTrue(!!root.querySelector('.chip-new'), 'New Group chip present');
+    assertTrue(!root.querySelector('.card.compact'), 'not compact');
+    assertTrue(!card.hasAttribute('compact'), 'host has no compact attribute');
+    assertEqual(card.getGridOptions(), undefined, 'full mode returns undefined (HA defaults)');
+  });
+
+  test('Unknown `layout` value falls back to full', async () => {
+    const card = freshCard();
+    card.setConfig({ type: 'custom:music-multiroom-card', layout: 'tiny', rooms: KITCHEN_ROOMS, favorites: KITCHEN_FAVS });
+    card.hass = fakeHass({ states: kitchenStates() }).hass;
+    assertTrue(!!card.shadowRoot.querySelector('.rooms-grid'));
+    assertEqual(card.getGridOptions(), undefined);
+  });
+
+  test('Compact layout: strip, now playing, volume, both favorite rows, More — no hero, no rooms grid, no New Group chip', async () => {
+    const card = freshCard();
+    card.setConfig({ type: 'custom:music-multiroom-card', layout: 'compact', more_path: '/dashboard-kok/musik', rooms: KITCHEN_ROOMS, favorites: KITCHEN_FAVS });
+    card.hass = fakeHass({ states: kitchenStates() }).hass;
+    const root = card.shadowRoot;
+    assertTrue(!!root.querySelector('.card.compact'), 'compact card');
+    assertTrue(card.hasAttribute('compact'), 'host attribute set (fills grid cell)');
+    assertTrue(!root.querySelector('.hero'), 'no hero');
+    assertTrue(!root.querySelector('.rooms-grid'), 'no rooms grid');
+    assertTrue(!root.querySelector('.chip-new'), 'no New Group chip');
+    assertTrue(!!root.querySelector('.np'), 'now playing row');
+    assertTrue(!!root.querySelector('.cvol input[data-action="group-volume"]'), 'group volume slider');
+    assertEqual(root.querySelectorAll('.cfav-row').length, 2, 'Spotify + Radio rows');
+    assertTrue(!!root.querySelector('.more-btn'), 'More button');
+    assertDeepEqual(card.getGridOptions(), { rows: 8, min_rows: 5, columns: 12 });
+  });
+
+  test('Compact: More button hidden without more_path', async () => {
+    const card = freshCard();
+    card.setConfig({ type: 'custom:music-multiroom-card', layout: 'compact', rooms: KITCHEN_ROOMS, favorites: KITCHEN_FAVS });
+    card.hass = fakeHass({ states: kitchenStates() }).hass;
+    assertTrue(!card.shadowRoot.querySelector('.more-btn'));
+  });
+
+  test('Compact: More navigates via pushState + location-changed', async () => {
+    const card = freshCard();
+    card.setConfig({ type: 'custom:music-multiroom-card', layout: 'compact', more_path: 'dashboard-kok/musik', rooms: KITCHEN_ROOMS, favorites: KITCHEN_FAVS });
+    card.hass = fakeHass({ states: kitchenStates() }).hass;
+    const origPush = history.pushState;
+    let pushed = null;
+    let fired = false;
+    history.pushState = (s, title, url) => { pushed = url; };
+    const onLoc = () => { fired = true; };
+    window.addEventListener('location-changed', onLoc);
+    try {
+      card.shadowRoot.querySelector('.more-btn').click();
+    } finally {
+      history.pushState = origPush;
+      window.removeEventListener('location-changed', onLoc);
+    }
+    assertEqual(pushed, '/dashboard-kok/musik', 'leading slash added');
+    assertTrue(fired, 'location-changed fired');
+  });
+
+  test('Compact: a more_path with a URL scheme is never navigated to', async () => {
+    const card = freshCard();
+    card.setConfig({ type: 'custom:music-multiroom-card', layout: 'compact', more_path: 'javascript:alert(1)', rooms: KITCHEN_ROOMS, favorites: KITCHEN_FAVS });
+    card.hass = fakeHass({ states: kitchenStates() }).hass;
+    const origPush = history.pushState;
+    let pushed = false;
+    history.pushState = () => { pushed = true; };
+    try { card.shadowRoot.querySelector('.more-btn').click(); } finally { history.pushState = origPush; }
+    assertTrue(!pushed);
+  });
+
+  test('Compact: idle rooms appear as chips; tapping one only focuses it (no join)', async () => {
+    const card = freshCard();
+    card.setConfig({ type: 'custom:music-multiroom-card', layout: 'compact', rooms: KITCHEN_ROOMS, favorites: KITCHEN_FAVS });
+    const { hass, calls } = fakeHass({ states: kitchenStates() });
+    card.hass = hass;
+    // Köket auto-focused (only thing playing); Matplatsen shows as an idle chip.
+    const idle = card.shadowRoot.querySelector('.chip-idle[data-group-id="media_player.matplatsen"]');
+    assertTrue(!!idle, 'idle room chip present');
+    idle.click();
+    assertEqual(card._focusedGroupId, 'media_player.matplatsen');
+    assertEqual(calls.length, 0, 'no join/unjoin');
+  });
+
+  test('Compact: nothing playing — idle chips still let you pick a room, and a radio favorite then plays there', async () => {
+    const card = freshCard();
+    card.setConfig({ type: 'custom:music-multiroom-card', layout: 'compact', rooms: KITCHEN_ROOMS, favorites: KITCHEN_FAVS });
+    const { hass, calls } = fakeHass({ states: kitchenStates('idle') });
+    card.hass = hass;
+    assertEqual(card.shadowRoot.querySelectorAll('.chip-idle').length, 2);
+    assertTrue(!card.shadowRoot.querySelector('.cvol'), 'no volume until something is focused');
+    card.shadowRoot.querySelector('.chip-idle[data-group-id="media_player.koket"]').click();
+    card.shadowRoot.querySelector('.cfav-chip[data-source="radio"]').click();
+    assertEqual(calls.length, 1);
+    assertEqual(calls[0].service, 'play_media');
+    assertEqual(calls[0].target.entity_id, 'media_player.koket');
+  });
+
+  test('Compact: a real HEOS group shows as one chip, its members not as idle chips', async () => {
+    const card = freshCard();
+    card.setConfig({ type: 'custom:music-multiroom-card', layout: 'compact', rooms: KITCHEN_ROOMS, favorites: KITCHEN_FAVS });
+    const both = ['media_player.koket', 'media_player.matplatsen'];
+    const states = kitchenStates('playing', { group_members: both });
+    states['media_player.matplatsen'] = { state: 'playing', attributes: { group_members: both } };
+    card.hass = fakeHass({ states }).hass;
+    assertEqual(card.shadowRoot.querySelectorAll('.groups-strip .chip').length, 1);
+    assertEqual(card.shadowRoot.querySelectorAll('.chip-idle').length, 0);
+  });
+
+  test('Compact: Spotify favorite still routes to mass_entity, transport + volume use the same paths as full', async () => {
+    const card = freshCard();
+    const rooms = [{ entity: 'media_player.heos_kok', name: 'Köket', mass_entity: 'media_player.mass_kok' }];
+    card.setConfig({ type: 'custom:music-multiroom-card', layout: 'compact', rooms, favorites: KITCHEN_FAVS });
+    const { hass, calls } = fakeHass({
+      states: {
+        'media_player.heos_kok': { state: 'playing', attributes: { group_members: ['media_player.heos_kok'], supported_features: 1 | 8 } },
+        'media_player.mass_kok': { state: 'playing', attributes: { media_title: 'Real title', media_artist: 'Real artist', supported_features: 1 } },
+      },
+    });
+    card.hass = hass;
+    const root = card.shadowRoot;
+    assertTrue(root.querySelector('.np-line').textContent.includes('Real title'), 'metadata from mass_entity');
+    root.querySelector('.cfav-chip[data-source="spotify"]').click();
+    assertEqual(calls[0].target.entity_id, 'media_player.mass_kok', 'spotify -> mass_entity');
+    root.querySelector('.np [data-cmd="next"]').click();
+    assertEqual(calls[1].service, 'media_next_track');
+    assertEqual(calls[1].target.entity_id, 'media_player.mass_kok', 'transport -> driving entity');
+    const slider = root.querySelector('.cvol input[data-action="group-volume"]');
+    slider.value = '40';
+    slider.dispatchEvent(new Event('change', { bubbles: true }));
+    assertEqual(calls[2].domain, 'heos');
+    assertEqual(calls[2].service, 'group_volume_set');
+    assertEqual(calls[2].target.entity_id, 'media_player.heos_kok', 'volume stays on HEOS');
+  });
+
+  test('Compact: radio-style source without PAUSE shows Stop on the main button', async () => {
+    const card = freshCard();
+    card.setConfig({ type: 'custom:music-multiroom-card', layout: 'compact', rooms: [{ entity: 'media_player.koket', name: 'Köket' }], favorites: KITCHEN_FAVS });
+    card.hass = fakeHass({
+      states: { 'media_player.koket': { state: 'playing', attributes: { group_members: ['media_player.koket'], supported_features: 4096 } } },
+    }).hass;
+    assertEqual(card.shadowRoot.querySelector('.np .tbtn-main').dataset.cmd, 'stop');
+  });
+
+  test('Compact: no Up Next queue lookups are made', async () => {
+    const card = freshCard();
+    card.setConfig({ type: 'custom:music-multiroom-card', layout: 'compact', rooms: KITCHEN_ROOMS, favorites: KITCHEN_FAVS });
+    const { hass, messages } = fakeHass({ states: kitchenStates() });
+    card.hass = hass;
+    await wait(10);
+    assertEqual(messages.filter((m) => m.service === 'get_queue').length, 0);
+  });
+
+  test('Slider drag: a hass update mid-drag does not replace the slider; one render runs after release', async () => {
+    const card = freshCard();
+    card.setConfig({ type: 'custom:music-multiroom-card', layout: 'compact', rooms: KITCHEN_ROOMS, favorites: KITCHEN_FAVS });
+    card.hass = fakeHass({ states: kitchenStates() }).hass;
+    const slider = card.shadowRoot.querySelector('.cvol input[type="range"]');
+    slider.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }));
+    // A real track change arrives mid-drag (_isDirty is true for this).
+    card.hass = fakeHass({ states: kitchenStates('playing', { media_title: 'Next song' }) }).hass;
+    assertTrue(card.shadowRoot.querySelector('.cvol input[type="range"]') === slider, 'same slider element during drag');
+    assertTrue(card._renderDeferred, 'render deferred');
+    slider.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, composed: true }));
+    slider.dispatchEvent(new Event('change', { bubbles: true }));
+    assertTrue(card.shadowRoot.querySelector('.cvol input[type="range"]') === slider, 'still same right after release (grace period)');
+    await wait(1400);
+    assertTrue(card.shadowRoot.querySelector('.cvol input[type="range"]') !== slider, 'deferred render ran');
+    assertTrue(card.shadowRoot.querySelector('.np-line').textContent.includes('Next song'), 'shows the update that arrived mid-drag');
+  });
+
+  test('Slider drag guard also covers the full layout group slider', async () => {
+    const card = freshCard();
+    card.setConfig({ type: 'custom:music-multiroom-card', rooms: KITCHEN_ROOMS, favorites: KITCHEN_FAVS });
+    card.hass = fakeHass({ states: kitchenStates() }).hass;
+    const slider = card.shadowRoot.querySelector('input[data-action="group-volume"]');
+    slider.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }));
+    card.hass = fakeHass({ states: kitchenStates('playing', { media_title: 'Next song' }) }).hass;
+    assertTrue(card.shadowRoot.querySelector('input[data-action="group-volume"]') === slider);
+    card._endSliderDrag();
+    assertTrue(card.shadowRoot.querySelector('input[data-action="group-volume"]') !== slider);
+  });
+
+  test('Editor: layout select writes layout: compact, and switching back to full removes the key', async () => {
+    const editor = freshEditor();
+    let last = null;
+    editor.addEventListener('config-changed', (e) => { last = e.detail.config; });
+    editor.setConfig({ type: 'custom:music-multiroom-card', rooms: KITCHEN_ROOMS, favorites: KITCHEN_FAVS });
+    editor.hass = fakeHass({ states: kitchenStates() }).hass;
+    assertTrue(!editor.shadowRoot.querySelector('[data-field="more_path"]'), 'more_path hidden in full');
+    const sel = editor.shadowRoot.querySelector('select[data-field="layout"]');
+    sel.value = 'compact';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    assertEqual(last.layout, 'compact');
+    assertEqual(last.type, 'custom:music-multiroom-card', 'type preserved');
+    const path = editor.shadowRoot.querySelector('input[data-field="more_path"]');
+    assertTrue(!!path, 'more_path field shown in compact');
+    path.value = ' /dashboard-kok/musik ';
+    path.dispatchEvent(new Event('change', { bubbles: true }));
+    assertEqual(last.more_path, '/dashboard-kok/musik');
+    const sel2 = editor.shadowRoot.querySelector('select[data-field="layout"]');
+    sel2.value = 'full';
+    sel2.dispatchEvent(new Event('change', { bubbles: true }));
+    assertTrue(!('layout' in last), 'layout key removed for full');
+  });
+
+  test('Compact: favorite and room names are escaped', async () => {
+    const card = freshCard();
+    const evil = '<img src=x onerror="window.__mmcXss=1">';
+    card.setConfig({
+      type: 'custom:music-multiroom-card', layout: 'compact',
+      rooms: [{ entity: 'media_player.koket', name: evil }, { entity: 'media_player.matplatsen', name: 'Matplatsen' }],
+      favorites: { spotify: [], radio: [{ name: evil, media_content_type: '', media_content_id: 'x' }] },
+    });
+    card.hass = fakeHass({ states: kitchenStates('idle') }).hass;
+    assertEqual(card.shadowRoot.querySelectorAll('img').length, 0, 'no injected img element');
+  });
+
+  // ---------------------------------------------------------------------
   // Run everything, render results
   // ---------------------------------------------------------------------
   const resultsEl = document.getElementById('results');
