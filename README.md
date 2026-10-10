@@ -430,8 +430,8 @@ now was verified with a scratch script written from scratch each time.
 
 - **Removed manual Spotify favorite entry entirely** — it was built on a
   wrong assumption from before any code existed. HEOS's `"playlist"`
-  media type looks names up against `heos.get_queue`... no,
-  `heos.get_playlists()` — HEOS's own separate **Playlists** library
+  media type looks names up against `heos.get_playlists()` — HEOS's own
+  separate **Playlists** library
   (things explicitly saved there), which is *not* the same list as
   **Favorites** (where a starred Spotify playlist actually lives, mixed
   in with radio stations). No name typed by hand could reliably match,
