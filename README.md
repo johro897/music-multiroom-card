@@ -273,6 +273,13 @@ is fixed; every existing case exists because something broke live first.
   or panel view there's no cell height to fill, so it simply takes the
   height its content needs. A `grid_options: rows:` in your card YAML
   overrides the 8-row default if the slot is a different size.
+- **"Browse Spotify" shows only a few odd playlists (for example from HEOS), or Spotify favorites fail with "Unsupported format" in the Music Assistant log.**
+  `mass_entity` is probably set to the room's HEOS entity instead of
+  Music Assistant's. Both have the same name; Music Assistant's usually
+  ends in `_2`. Check **Developer tools → Template** with
+  `{{ integration_entities('music_assistant') | select('match','media_player') | list }}`
+  and use those entity IDs. The editor now offers only Music Assistant
+  entities for this field and warns when it equals the HEOS entity.
 - **Spotify tab shows a hint instead of favorites / tapping a Spotify
   favorite does nothing but shows an error toast.** The focused room has
   no `mass_entity` configured — add one in the editor (that room's own
@@ -326,6 +333,15 @@ is fixed; every existing case exists because something broke live first.
 
 ### 1.1.0
 
+- **Editor: the Music Assistant entity can't be the wrong one any more**
+  ([#17](https://github.com/johro897/music-multiroom-card/issues/17)). The
+  `mass_entity` picker only offers entities from the Music Assistant
+  integration (every media player, as before, if Home Assistant's entity
+  registry isn't available), and a warning appears when it is the same as
+  the room's HEOS entity or belongs to another integration. Tapping a
+  Spotify favorite in a room whose `mass_entity` equals its `entity` now
+  shows an error instead of sending a `library://` address to the HEOS
+  speaker, which fails with "Unsupported format".
 - **New: compact layout** (`layout: compact`) for a small dashboard slot
   such as a tablet start page — group strip, one-line now playing, group
   volume and both favorite lists, plus an optional **New group / More**

@@ -884,6 +884,87 @@
   // ---------------------------------------------------------------------
   // Run everything, render results
   // ---------------------------------------------------------------------
+  // ---------------------------------------------------------------------
+  // mass_entity must be Music Assistant's entity (#17)
+  // ---------------------------------------------------------------------
+  const roomsWith = (entity, mass_entity) => ({
+    type: 'custom:music-multiroom-card',
+    rooms: [{ entity, name: 'Köket', mass_entity }],
+    favorites: { spotify: [], radio: [] },
+  });
+  const registry = {
+    'media_player.koket': { entity_id: 'media_player.koket', platform: 'heos' },
+    'media_player.koket_2': { entity_id: 'media_player.koket_2', platform: 'music_assistant' },
+  };
+
+  test('Spotify favorite is refused (no service call, error shown) when mass_entity is the same as the HEOS entity', async () => {
+    const card = freshCard();
+    card.setConfig(roomsWith('media_player.koket', 'media_player.koket'));
+    const { hass, calls } = fakeHass({
+      states: { 'media_player.koket': { state: 'playing', attributes: { group_members: ['media_player.koket'] } } },
+    });
+    card.hass = hass;
+    card._focusedGroupId = 'media_player.koket';
+    const messages = [];
+    card.addEventListener('hass-notification', (e) => messages.push(e.detail.message));
+    card._onFavoriteTap('music', 'library://playlist/79', 'spotify');
+    assertEqual(calls.length, 0, 'nothing may be sent to the HEOS entity');
+    assertEqual(messages.length, 1);
+    assertTrue(/HEOS entity/.test(messages[0]), messages[0]);
+  });
+
+  test('Spotify favorite still routes to a real Music Assistant entity', async () => {
+    const card = freshCard();
+    card.setConfig(roomsWith('media_player.koket', 'media_player.koket_2'));
+    const { hass, calls } = fakeHass({
+      states: { 'media_player.koket': { state: 'playing', attributes: { group_members: ['media_player.koket'] } } },
+    });
+    hass.entities = registry;
+    card.hass = hass;
+    card._focusedGroupId = 'media_player.koket';
+    card._onFavoriteTap('music', 'library://playlist/79', 'spotify');
+    assertEqual(calls.length, 1);
+    assertEqual(calls[0].target.entity_id, 'media_player.koket_2');
+  });
+
+  test('Editor: the Music Assistant picker only offers Music Assistant entities, the HEOS picker is unfiltered', async () => {
+    const editor = freshEditor();
+    editor.setConfig(roomsWith('media_player.koket', 'media_player.koket_2'));
+    const { hass } = fakeHass({});
+    hass.entities = registry;
+    editor.hass = hass;
+    const mass = editor.shadowRoot.querySelector('ha-entity-picker[data-field="mass_entity"]');
+    assertTrue(typeof mass.entityFilter === 'function', 'mass_entity picker should have a filter');
+    assertEqual(mass.entityFilter({ entity_id: 'media_player.koket_2' }), true);
+    assertEqual(mass.entityFilter({ entity_id: 'media_player.koket' }), false);
+    const heos = editor.shadowRoot.querySelector('ha-entity-picker[data-field="entity"]');
+    assertTrue(heos.entityFilter === undefined, 'the HEOS picker must stay unfiltered');
+  });
+
+  test('Editor: without an entity registry the Music Assistant picker is not filtered', async () => {
+    const editor = freshEditor();
+    editor.setConfig(roomsWith('media_player.koket', 'media_player.koket_2'));
+    editor.hass = fakeHass({}).hass;
+    const mass = editor.shadowRoot.querySelector('ha-entity-picker[data-field="mass_entity"]');
+    assertTrue(mass.entityFilter === undefined, 'nothing to filter on, so offer everything');
+  });
+
+  test('Editor warns when mass_entity equals the HEOS entity or belongs to another integration, and is quiet otherwise', async () => {
+    const warn = (entity, mass) => {
+      const editor = freshEditor();
+      editor.setConfig(roomsWith(entity, mass));
+      const { hass } = fakeHass({});
+      hass.entities = { ...registry, 'media_player.other': { entity_id: 'media_player.other', platform: 'sonos' } };
+      editor.hass = hass;
+      const el = editor.shadowRoot.querySelector('.room-block .mass-warning:not([hidden])');
+      return el ? el.textContent : null;
+    };
+    assertTrue(/same entity/.test(warn('media_player.koket', 'media_player.koket')), 'same entity should warn');
+    assertTrue(/does not belong to the Music Assistant/.test(warn('media_player.koket', 'media_player.other')), 'other integration should warn');
+    assertEqual(warn('media_player.koket', 'media_player.koket_2'), null);
+    assertEqual(warn('media_player.koket', ''), null);
+  });
+
   const resultsEl = document.getElementById('results');
   const summaryEl = document.getElementById('summary');
   let passCount = 0;

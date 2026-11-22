@@ -64,6 +64,9 @@
       editor_room_icon: 'Icon',
       editor_room_mass_entity: 'Music Assistant entity (optional)',
       editor_room_mass_entity_hint: 'Enables real Spotify playback for this room. Leave empty if this room has no Music Assistant counterpart.',
+      editor_mass_same_as_entity: "This is the same entity as the room's HEOS entity. Pick the Music Assistant entity for this speaker (often the same name with a _2 suffix).",
+      editor_mass_not_ma: 'This entity does not belong to the Music Assistant integration, so Spotify cannot be played through it.',
+      error_mass_same_entity: "This room's Music Assistant entity is set to its HEOS entity, so Spotify can't be played. Pick the Music Assistant entity for it in the card editor.",
       editor_remove: 'Remove',
       editor_favorites: 'Favorites',
       editor_favorites_spotify_title: 'Spotify',
@@ -133,6 +136,9 @@
       editor_room_icon: 'Ikon',
       editor_room_mass_entity: 'Music Assistant-entitet (valfri)',
       editor_room_mass_entity_hint: 'Möjliggör riktig Spotify-uppspelning för rummet. Lämna tomt om rummet saknar en Music Assistant-motsvarighet.',
+      editor_mass_same_as_entity: 'Det här är samma entitet som rummets HEOS-entitet. Välj Music Assistants entitet för högtalaren (ofta samma namn med suffixet _2).',
+      editor_mass_not_ma: 'Den här entiteten tillhör inte Music Assistant-integrationen, så Spotify kan inte spelas via den.',
+      error_mass_same_entity: 'Rummets Music Assistant-entitet är satt till dess HEOS-entitet, så Spotify kan inte spelas. Välj rätt Music Assistant-entitet i kortets editor.',
       editor_remove: 'Ta bort',
       editor_favorites: 'Favoriter',
       editor_favorites_spotify_title: 'Spotify',
@@ -177,6 +183,31 @@
   // ---------------------------------------------------------------------
   // Utilities
   // ---------------------------------------------------------------------
+  // A room's `mass_entity` must be Music Assistant's own entity for the same
+  // speaker. Returns 'same' when it equals the room's HEOS entity (a HEOS
+  // entity would be told to play a library:// address as a URL and fail),
+  // 'not_ma' when the entity registry says it belongs to another
+  // integration, or null.
+  function massEntityProblem(hass, room) {
+    if (!room || !room.mass_entity) return null;
+    if (room.mass_entity === room.entity) return 'same';
+    const reg = hass && hass.entities && hass.entities[room.mass_entity];
+    if (reg && reg.platform && reg.platform !== 'music_assistant') return 'not_ma';
+    return null;
+  }
+
+  // Filter for the editor's mass_entity picker: only Music Assistant
+  // entities. Without an entity registry (nothing to filter on) the picker
+  // keeps offering every media player, as before.
+  function massEntityFilter(hass) {
+    const reg = hass && hass.entities;
+    if (!reg || !Object.keys(reg).length) return undefined;
+    return (stateObj) => {
+      const entry = reg[stateObj && stateObj.entity_id];
+      return !!entry && entry.platform === 'music_assistant';
+    };
+  }
+
   function escHtml(str) {
     if (str === undefined || str === null) return '';
     return String(str)
@@ -800,6 +831,10 @@
         const room = this._config.rooms.find((r) => r.entity === focusedLeader);
         if (!room?.mass_entity) {
           this._notifyError(t(this._hass, 'error_no_mass_entity'));
+          return;
+        }
+        if (massEntityProblem(this._hass, room) === 'same') {
+          this._notifyError(t(this._hass, 'error_mass_same_entity'));
           return;
         }
         targetEntity = room.mass_entity;
@@ -1735,8 +1770,8 @@
     _renderRoomsRows() {
       const hass = this._hass;
       return this._config.rooms
-        .map(
-          (room, idx) => `
+        .map((room, idx) => {
+          return `
         <div class="room-block">
           <div class="row">
             <ha-entity-picker class="field-entity" data-idx="${idx}" data-field="entity"></ha-entity-picker>
@@ -1750,8 +1785,9 @@
             <span class="mass-tag">MA</span>
             <ha-entity-picker class="field-entity" data-idx="${idx}" data-field="mass_entity"></ha-entity-picker>
           </div>
-        </div>`
-        )
+          <div class="hint hint-error mass-warning" data-idx="${idx}" role="alert" hidden></div>
+        </div>`;
+        })
         .join('');
     }
 
@@ -1873,6 +1909,19 @@
         </div>`;
     }
 
+    // Shown/hidden in place (no re-render) so it also works when `hass`
+    // arrives after setConfig, and follows the room's current mass_entity.
+    _updateMassWarnings() {
+      const hass = this._hass;
+      if (!this.shadowRoot) return;
+      this.shadowRoot.querySelectorAll('.mass-warning').forEach((el) => {
+        const room = this._config.rooms[Number(el.dataset.idx)];
+        const problem = massEntityProblem(hass, room);
+        el.textContent = problem ? t(hass, problem === 'same' ? 'editor_mass_same_as_entity' : 'editor_mass_not_ma') : '';
+        el.hidden = !problem;
+      });
+    }
+
     _bindPickers() {
       if (!this.shadowRoot || !this._hass) return;
       const hass = this._hass;
@@ -1888,6 +1937,7 @@
         el.hass = hass;
         el.value = this._config.rooms[idx]?.mass_entity || '';
         el.includeDomains = ['media_player'];
+        el.entityFilter = massEntityFilter(hass);
         el.label = t(hass, 'editor_room_mass_entity');
       });
       this.shadowRoot.querySelectorAll('ha-icon-picker[data-field="icon"]').forEach((el) => {
@@ -1896,6 +1946,7 @@
         el.value = this._config.rooms[idx]?.icon || '';
         el.label = t(hass, 'editor_room_icon');
       });
+      this._updateMassWarnings();
     }
 
     _onPickerChange(e) {
